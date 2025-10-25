@@ -34,9 +34,9 @@ if st.button("♻️ Recargar datos"):
     st.cache_data.clear()
 
 # --- Cargar datos --- /secrets de streamlit
-balance_url = st.secrets["urls"]["Balance"]
-mapeo_url = st.secrets["urls"]["Mapeo de cuentas_B"]
-info_manual = st.secrets["urls"]["Info Manual"]
+balance_url = st.secrets["urls"]["balance_url"]
+mapeo_url = st.secrets["urls"]["mapeo_url"]
+info_manual = st.secrets["urls"]["info_manual"]
 
 OPTIONS = [
     "BALANCE POR EMPRESA",
@@ -573,4 +573,5 @@ if selected == "BALANCE POR EMPRESA":
 elif selected == "BALANCE GENERAL ACUMULADO":
     tabla_balance_acumulado()
     tabla_Ingresos_Egresos()
+
     tabla_ingresos_egresos2()
