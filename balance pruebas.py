@@ -747,6 +747,16 @@ def tabla_inversiones():
         hide_index=True
     )
 
+    total_activo = df_inv["ACTIVO"].sum()
+    total_social = df_inv["SOCIAL"].replace("", 0).astype(float).sum()
+    df_total = pd.DataFrame({
+        "VARIABLE": [""],
+        "DESCRIPCIÓN": ["TOTAL INVERSIONES"],
+        "ACTIVO": [total_activo],
+        "SOCIAL": [total_social],
+        "TOTALES": [total_activo + total_social]
+    })
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df_inv.to_excel(writer, index=False, sheet_name="Inversiones")
@@ -1019,6 +1029,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 elif selected == "BALANCE FINAL":
 
     tabla_BALANCE_FINAL()
+
 
 
 
