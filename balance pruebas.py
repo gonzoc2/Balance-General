@@ -651,7 +651,8 @@ def tabla_inversiones():
 
     UTAC = total_social  
     UTILIDAD_EJERCICIO = 0.00
-    total_inversiones = "EHM-HOLDING"+UTAC
+    EHM_HOLDING = df_inv.loc[df_inv["VARIABLE"] == "EHM-HOLDING", "ACTIVO"].sum()
+    total_inversiones = EHM_HOLDING + UTAC
     GOODWILL = (total_activo+ total_social)*-1
     TOTAL_CAPITAL_SOCIAL_FINAL = total_inversiones + GOODWILL
 
@@ -975,4 +976,5 @@ elif selected == "BALANCE GENERAL ACUMULADO":
     tabla_inversiones()
 
 elif selected == "BALANCE FINAL":
+
     tabla_BALANCE_FINAL()
