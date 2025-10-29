@@ -750,7 +750,7 @@ def tabla_inversiones():
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df_inv.to_excel(writer, index=False, sheet_name="Inversiones")
-        df_total.to_excel(writer, index=False, sheet_name="Totales", startrow=0)
+        df_total.to_excel(writer, index=False, sheet_name="Totales")
         workbook = writer.book
         for sheet in ["Inversiones", "Totales"]:
             worksheet = writer.sheets[sheet]
@@ -1019,6 +1019,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 elif selected == "BALANCE FINAL":
 
     tabla_BALANCE_FINAL()
+
 
 
 
