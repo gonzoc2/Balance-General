@@ -1,17 +1,20 @@
-# Core web app
-streamlit==1.40.2
+# --- Core ---
+streamlit==1.39.0
 streamlit-option-menu==0.3.12
 
-# Data handling
+# --- Data handling ---
 pandas==2.2.3
-numpy==1.26.4
+numpy==2.1.2
 
-# File I/O and Excel
-xlsxwriter==3.2.0
+# --- Excel read/write ---
 openpyxl==3.1.5
+xlsxwriter==3.2.0
+pyxlsb==1.0.10
 
-# HTTP requests
+# --- Networking & I/O ---
 requests==2.32.3
 
-# Utilities
-functools32; python_version < "3.3"
+# --- Visualization (opcional, si usas gráficos) ---
+matplotlib==3.9.2
+altair==5.3.0
+
