@@ -40,6 +40,7 @@ mapeo_url = st.secrets["urls"]["mapeo_url"]
 info_manual = st.secrets["urls"]["info_manual"]
 
 hojas_empresas = ["HOLDING", "FWD", "WH", "UBIKARGA", "EHM", "RESA", "GREEN"]
+
 @st.cache_data(show_spinner="🧩 Cargando mapeo de cuentas...")
 def cargar_mapeo(url: str) -> pd.DataFrame:
     """Descarga y carga el archivo de mapeo de cuentas."""
@@ -79,6 +80,10 @@ def cargar_info_manual(url: str) -> pd.DataFrame:
     df_info = pd.read_excel(file, sheet_name="INTEREMPRESAS", engine="openpyxl")
     df_info.columns = df_info.columns.str.strip()
     return df_info
+
+df_mapeo = cargar_mapeo(mapeo_url)         # ✅ Aquí ya se define df_mapeo
+data_hojas = cargar_hojas(balance_url, hojas_empresas)
+df_info_manual = cargar_info_manual(info_manual)
 
 posibles_columnas_cuenta = ["CUENTA", "Descripción"]
 col_cuenta_mapeo = next((c for c in posibles_columnas_cuenta if c in df_mapeo.columns), None)
@@ -1014,6 +1019,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 elif selected == "BALANCE FINAL":
 
     tabla_BALANCE_FINAL()
+
 
 
 
