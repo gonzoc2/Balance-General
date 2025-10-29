@@ -39,6 +39,55 @@ balance_url = st.secrets["urls"]["balance_url"]
 mapeo_url = st.secrets["urls"]["mapeo_url"]
 info_manual = st.secrets["urls"]["info_manual"]
 
+hojas_empresas = ["HOLDING", "FWD", "WH", "UBIKARGA", "EHM", "RESA", "GREEN"]
+@st.cache_data(show_spinner="🧩 Cargando mapeo de cuentas...")
+def cargar_mapeo(url: str) -> pd.DataFrame:
+    """Descarga y carga el archivo de mapeo de cuentas."""
+    r = requests.get(url)
+    r.raise_for_status()
+    file = BytesIO(r.content)
+    df_mapeo = pd.read_excel(file, sheet_name=None, engine="openpyxl")
+
+    if isinstance(df_mapeo, dict):
+        df_mapeo = list(df_mapeo.values())[0]  # Si el Excel tiene varias hojas, tomar la primera
+
+    df_mapeo.columns = df_mapeo.columns.str.strip()
+    return df_mapeo
+@st.cache_data(show_spinner="📘 Cargando hojas del balance...")
+def cargar_hojas(url: str, hojas: list) -> dict:
+    """Descarga y carga las hojas específicas del archivo de balance."""
+    r = requests.get(url)
+    r.raise_for_status()
+    file = BytesIO(r.content)
+    data = {}
+
+    for hoja in hojas:
+        try:
+            df = pd.read_excel(file, sheet_name=hoja, engine="openpyxl")
+            df.columns = df.columns.str.strip()
+            data[hoja] = df
+        except Exception as e:
+            st.warning(f"⚠️ No se pudo leer la hoja {hoja}: {e}")
+
+    return data
+@st.cache_data(show_spinner="📋 Cargando información manual (Interempresas)...")
+def cargar_info_manual(url: str) -> pd.DataFrame:
+    """Carga la hoja INTEREMPRESAS del archivo Info Manual."""
+    r = requests.get(url)
+    r.raise_for_status()
+    file = BytesIO(r.content)
+    df_info = pd.read_excel(file, sheet_name="INTEREMPRESAS", engine="openpyxl")
+    df_info.columns = df_info.columns.str.strip()
+    return df_info
+
+posibles_columnas_cuenta = ["Cuenta", "Descripción"]
+col_cuenta_mapeo = next((c for c in posibles_columnas_cuenta if c in df_mapeo.columns), None)
+
+posibles_columnas_monto = ["Saldo Final", "Saldo final"]
+col_monto = next((c for c in posibles_columnas_monto if c in df_mapeo.columns), None) or "Saldo Final"
+resultados = []
+totales_globales = {}
+
 OPTIONS = [
     "BALANCE POR EMPRESA",
     "BALANCE GENERAL ACUMULADO",
@@ -55,50 +104,26 @@ selected = option_menu(
 
 
 def tabla_balance_por_empresa():
-    st.subheader("Balance General por Empresa")
+    st.subheader("📊 Balance General por Empresa")
 
-    @st.cache_data(show_spinner="Cargando mapeo de cuentas...")
-    def cargar_mapeo(url):
-        r = requests.get(url)
-        r.raise_for_status()
-        file = BytesIO(r.content)
-        df_mapeo = pd.read_excel(file, sheet_name=None, engine="openpyxl")
-        if isinstance(df_mapeo, dict):
-            df_mapeo = list(df_mapeo.values())[0]
-        df_mapeo.columns = df_mapeo.columns.str.strip()
-        return df_mapeo
+    # Usa las variables globales cargadas previamente
+    global df_mapeo, data_hojas
 
-    @st.cache_data(show_spinner="Cargando hojas del balance...")
-    def cargar_hojas(url, hojas):
-        r = requests.get(url)
-        r.raise_for_status()
-        file = BytesIO(r.content)
-        data = {}
-        for hoja in hojas:
-            try:
-                df = pd.read_excel(file, sheet_name=hoja, engine="openpyxl")
-                df.columns = df.columns.str.strip()
-                data[hoja] = df
-            except Exception as e:
-                st.warning(f"No se pudo leer la hoja {hoja}: {e}")
-        return data
-
-    hojas_empresas = ["HOLDING", "FWD", "WH", "UBIKARGA", "EHM", "RESA", "GREEN"]
-    df_mapeo = cargar_mapeo(mapeo_url)
-    data_hojas = cargar_hojas(balance_url, hojas_empresas)
-
+    # --- Columnas detectadas ---
     posibles_columnas_cuenta = ["Cuenta", "Descripción"]
     col_cuenta_mapeo = next((c for c in posibles_columnas_cuenta if c in df_mapeo.columns), None)
-    posibles_columnas_monto = ["Saldo final"]
-    col_monto = posibles_columnas_monto[0]
+    posibles_columnas_monto = ["Saldo Final", "Saldo final"]
+    col_monto = next((c for c in posibles_columnas_monto if c in df_mapeo.columns), None) or "Saldo Final"
 
     resultados = []
-    totales_globales = {} 
+    totales_globales = {}
 
+    # --- Procesar cada hoja ---
     for empresa, df in data_hojas.items():
         col_cuenta_balance = next((c for c in posibles_columnas_cuenta if c in df.columns), None)
         if not col_cuenta_balance:
             continue
+
         df_merged = df.merge(
             df_mapeo[["Descripción", "CLASIFICACION", "CATEGORIA"]],
             on="Descripción",
@@ -110,23 +135,32 @@ def tabla_balance_por_empresa():
         resumen.rename(columns={col_monto: empresa}, inplace=True)
         resultados.append(resumen)
 
+    # --- Consolidar todas las empresas ---
+    from functools import reduce
     df_final = reduce(lambda left, right: pd.merge(left, right, on=["CLASIFICACION", "CATEGORIA"], how="outer"), resultados).fillna(0)
-    df_final["TOTAL ACUMULADO"] = df_final[hojas_empresas].sum(axis=1)
+    df_final["TOTAL ACUMULADO"] = df_final[[c for c in df_final.columns if c not in ["CLASIFICACION", "CATEGORIA"]]].sum(axis=1)
 
+    # --- Mostrar tablas por clasificación ---
     for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
         df_clasif = df_final[df_final["CLASIFICACION"] == clasif].copy()
         if df_clasif.empty:
             continue
+
         subtotal = pd.DataFrame({
             "CLASIFICACION": [clasif],
             "CATEGORIA": [f"TOTAL {clasif}"]
         })
-        for col in hojas_empresas + ["TOTAL ACUMULADO"]:
+
+        for col in [c for c in df_final.columns if c not in ["CLASIFICACION", "CATEGORIA"]]:
             subtotal[col] = df_clasif[col].sum()
+
         df_clasif = pd.concat([df_clasif, subtotal], ignore_index=True)
-        totales_globales[clasif] = float(df_clasif.loc[df_clasif["CATEGORIA"] == f"TOTAL {clasif}", "TOTAL ACUMULADO"])
-        for col in hojas_empresas + ["TOTAL ACUMULADO"]:
+        totales_globales[clasif] = float(subtotal["TOTAL ACUMULADO"])
+
+        # Formateo
+        for col in [c for c in df_clasif.columns if c not in ["CLASIFICACION", "CATEGORIA"]]:
             df_clasif[col] = df_clasif[col].apply(lambda x: f"${x:,.2f}")
+
         with st.expander(f"🔹 {clasif}"):
             st.dataframe(df_clasif.drop(columns=["CLASIFICACION"]), use_container_width=True, hide_index=True)
 
@@ -135,7 +169,7 @@ def tabla_balance_por_empresa():
         total_activo = totales_globales["ACTIVO"]
         total_pasivo = totales_globales["PASIVO"]
         total_capital = totales_globales["CAPITAL"]
-        balance = total_activo + total_pasivo + total_capital  
+        balance = total_activo + total_pasivo + total_capital
 
         resumen_final = pd.DataFrame({
             "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA (Debe ser 0)"],
@@ -147,12 +181,14 @@ def tabla_balance_por_empresa():
             ]
         })
 
+        st.markdown("### ⚖️ **Resumen del Balance General Consolidado**")
         st.dataframe(resumen_final, use_container_width=True, hide_index=True)
 
         if abs(balance) < 1:
             st.success("✅ El balance general está cuadrado (ACTIVO = PASIVO + CAPITAL).")
         else:
             st.error("❌ El balance no cuadra. Revisa los saldos por empresa.")
+
 #tabla ingresos y egresos por empresa
 def tabla_Ingresos_Egresos(balance_url):
     st.write("📊 **Ingresos, Gastos y Utilidad del Eje**")
@@ -978,3 +1014,4 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 elif selected == "BALANCE FINAL":
 
     tabla_BALANCE_FINAL()
+
