@@ -80,7 +80,7 @@ def cargar_info_manual(url: str) -> pd.DataFrame:
     df_info.columns = df_info.columns.str.strip()
     return df_info
 
-posibles_columnas_cuenta = ["Cuenta", "Descripción"]
+posibles_columnas_cuenta = ["CUENTA", "Descripción", "CATEGORIA, "CLASIFICACION"]
 col_cuenta_mapeo = next((c for c in posibles_columnas_cuenta if c in df_mapeo.columns), None)
 
 posibles_columnas_monto = ["Saldo Final", "Saldo final"]
@@ -1014,4 +1014,5 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 elif selected == "BALANCE FINAL":
 
     tabla_BALANCE_FINAL()
+
 
