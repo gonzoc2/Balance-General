@@ -44,7 +44,7 @@ selected = option_menu(
 if selected == "BALANCE POR EMPRESA":
 
     def tabla_balance_por_empresa():
-        st.subheader("📘 Balance General por Empresa (coincidencia exacta con detalle de cuentas)")
+        st.subheader("📘 Balance General por Empresa (sin duplicados y con detalle)")
 
         from functools import reduce
         import requests
@@ -61,6 +61,7 @@ if selected == "BALANCE POR EMPRESA":
                 .replace("  ", " ")
             )
 
+        # --- Cargar y limpiar mapeo ---
         @st.cache_data(show_spinner="Cargando mapeo de cuentas...")
         def cargar_mapeo(url):
             r = requests.get(url)
@@ -69,8 +70,16 @@ if selected == "BALANCE POR EMPRESA":
             df_mapeo = pd.read_excel(file, engine="openpyxl")
             df_mapeo.columns = df_mapeo.columns.str.strip()
             df_mapeo["Descripción"] = df_mapeo["Descripción"].apply(limpiar_texto)
+
+            # 🔹 Eliminar duplicados del mapeo por Descripción
+            df_mapeo = (
+                df_mapeo.dropna(subset=["Descripción"])
+                        .drop_duplicates(subset=["Descripción"], keep="first")
+            )
+
             return df_mapeo
 
+        # --- Cargar balances de cada hoja ---
         @st.cache_data(show_spinner="Cargando hojas del balance...")
         def cargar_balance(url, hojas):
             r = requests.get(url)
@@ -97,6 +106,7 @@ if selected == "BALANCE POR EMPRESA":
         resultados = []
         balances_detallados = {}  # guarda detalle con cuentas
 
+        # --- Procesar cada empresa ---
         for empresa in hojas_empresas:
             if empresa not in data_empresas:
                 continue
@@ -109,8 +119,10 @@ if selected == "BALANCE POR EMPRESA":
                 st.warning(f"⚠️ {empresa}: columnas inválidas (Descripción / Saldo).")
                 continue
 
-            # Limpieza
+            # Limpieza de texto
             df[col_cuenta] = df[col_cuenta].apply(limpiar_texto)
+
+            # Convertir monto a numérico
             df[col_monto] = (
                 df[col_monto]
                 .replace("[\$,]", "", regex=True)
@@ -118,7 +130,10 @@ if selected == "BALANCE POR EMPRESA":
             )
             df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
 
-            # --- Merge exacto con mapeo ---
+            # 🔹 Agrupar duplicados dentro del balance antes del merge
+            df = df.groupby(col_cuenta, as_index=False)[col_monto].sum()
+
+            # Merge exacto con mapeo
             df_merged = df.merge(
                 df_mapeo[["Descripción", "CLASIFICACION", "CATEGORIA"]],
                 on="Descripción",
@@ -129,7 +144,7 @@ if selected == "BALANCE POR EMPRESA":
                 st.warning(f"⚠️ {empresa}: sin coincidencias exactas en el mapeo.")
                 continue
 
-            # --- Agrupado por CLASIFICACION y CATEGORIA ---
+            # Agrupar y sumar
             resumen = (
                 df_merged.groupby(["CLASIFICACION", "CATEGORIA"])[col_monto]
                 .sum()
@@ -137,16 +152,13 @@ if selected == "BALANCE POR EMPRESA":
                 .rename(columns={col_monto: empresa})
             )
             resultados.append(resumen)
-
-            # Guardar detalle por categoría para visualizarlo
             balances_detallados[empresa] = df_merged.copy()
 
         if not resultados:
             st.error("❌ No se pudo generar información consolidada.")
             return
 
-        # --- Consolidado ---
-        from functools import reduce
+        # --- Consolidado total ---
         df_final = reduce(
             lambda l, r: pd.merge(l, r, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
             resultados
@@ -170,14 +182,13 @@ if selected == "BALANCE POR EMPRESA":
                 subtotal[col] = df_clasif[col].sum()
             df_clasif = pd.concat([df_clasif, subtotal], ignore_index=True)
 
-            # Formato visual
             for col in hojas_empresas + ["TOTAL ACUMULADO"]:
                 df_clasif[col] = df_clasif[col].apply(lambda x: f"${x:,.2f}")
 
             with st.expander(f"📘 {clasif} (ver detalle por cuenta)"):
                 st.dataframe(df_clasif.drop(columns=["CLASIFICACION"]), use_container_width=True, hide_index=True)
 
-                # --- Mostrar detalle por empresa ---
+                # Mostrar detalle por empresa
                 for empresa in hojas_empresas:
                     if empresa in balances_detallados:
                         df_detalle = balances_detallados[empresa]
@@ -185,7 +196,7 @@ if selected == "BALANCE POR EMPRESA":
                         if not df_detalle.empty:
                             st.markdown(f"**{empresa} — detalle de cuentas:**")
                             st.dataframe(
-                                df_detalle[[ "CATEGORIA", "Descripción", col_monto ]].style.format({col_monto: "${:,.2f}"}),
+                                df_detalle[["CATEGORIA", "Descripción", col_monto]].style.format({col_monto: "${:,.2f}"}),
                                 use_container_width=True,
                                 hide_index=True
                             )
@@ -238,9 +249,9 @@ if selected == "BALANCE POR EMPRESA":
             writer.sheets["Resumen"].set_column("B:B", 20)
 
         st.download_button(
-            label="💾 Descargar Excel detallado (todas las cuentas y consolidado)",
+            label="💾 Descargar Excel detallado (sin duplicados)",
             data=output.getvalue(),
-            file_name="Balance_Detallado_Por_Empresa.xlsx",
+            file_name="Balance_SinDuplicados_Por_Empresa.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
@@ -1059,6 +1070,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
