@@ -46,21 +46,6 @@ if selected == "BALANCE POR EMPRESA":
     def tabla_balance_por_empresa():
         st.subheader("📘 Balance General por Empresa (usando un solo mapeo)")
 
-        from functools import reduce
-        import numpy as np
-        import requests
-        from io import BytesIO
-
-        # --- Funciones auxiliares ---
-        def limpiar_texto(s):
-            return (
-                str(s)
-                .strip()
-                .upper()
-                .replace("\xa0", " ")
-                .replace("  ", " ")
-            )
-
         @st.cache_data(show_spinner="Cargando mapeo de cuentas...")
         def cargar_mapeo(url):
             r = requests.get(url)
@@ -1003,6 +988,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
