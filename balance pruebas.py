@@ -137,7 +137,9 @@ if selected == "BALANCE POR EMPRESA":
             df_clasif = pd.concat([df_clasif, subtotal], ignore_index=True)
             totales_globales[clasif] = float(df_clasif.loc[df_clasif["CATEGORIA"] == f"TOTAL {clasif}", "TOTAL ACUMULADO"])
             for col in hojas_empresas + ["TOTAL ACUMULADO"]:
-                df_clasif[col] = df_clasif[col].apply(lambda x: f"${x:,.2f}")
+                df_clasif[col] = df_clasif[col].apply(
+                    lambda x: f"${float(x):,.2f}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else x
+                )
             with st.expander(f"🔹 {clasif}"):
                 st.dataframe(df_clasif.drop(columns=["CLASIFICACION"]), use_container_width=True, hide_index=True)
 
@@ -977,6 +979,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
