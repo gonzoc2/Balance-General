@@ -92,6 +92,16 @@ if selected == "BALANCE POR EMPRESA":
 
             # Limpieza de texto y merge
             df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
+            def limpiar_texto(s):
+                return (
+                    str(s)
+                    .strip()
+                    .upper()
+                    .replace("\xa0", " ")
+                    .replace("  ", " ")
+                )
+
+            df[col_cuenta] = df[col_cuenta].apply(limpiar_texto)            
             df_merged = df.merge(
                 df_mapeo[["Descripción", "CLASIFICACION", "CATEGORIA"]],
                 left_on=col_cuenta,
@@ -996,6 +1006,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
