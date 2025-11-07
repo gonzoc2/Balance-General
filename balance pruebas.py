@@ -44,14 +44,15 @@ selected = option_menu(
 if selected == "BALANCE POR EMPRESA":
 
     def tabla_balance_por_empresa():
-        st.subheader("📘 Balance General por Empresa (usando un solo mapeo)")
+        st.subheader("📘 Balance General por Empresa (coincidencia exacta y exportación a Excel)")
 
         from functools import reduce
         import numpy as np
         import requests
         from io import BytesIO
+        import xlsxwriter
 
-        # --- Funciones auxiliares ---
+        # --- Función de limpieza uniforme ---
         def limpiar_texto(s):
             return (
                 str(s)
@@ -86,16 +87,16 @@ if selected == "BALANCE POR EMPRESA":
                     st.warning(f"⚠️ No se pudo leer la hoja {hoja}: {e}")
             return data
 
-        # --- Archivos y hojas ---
+        # --- Configuración general ---
         hojas_empresas = ["HOLDING", "FWD", "WH", "UBIKARGA", "EHM", "RESA", "GREEN"]
         df_mapeo = cargar_mapeo(mapeo_url)
         data_empresas = cargar_balance(balance_url, hojas_empresas)
 
-        # --- Posibles nombres de columnas ---
         posibles_columnas_cuenta = ["Descripción", "Cuenta", "Concepto"]
         posibles_columnas_monto = ["Saldo final", "Saldo", "Monto", "Importe", "Valor"]
 
         resultados = []
+        balances_individuales = {}  # para guardar cada empresa
 
         for empresa in hojas_empresas:
             if empresa not in data_empresas:
@@ -103,7 +104,6 @@ if selected == "BALANCE POR EMPRESA":
                 continue
 
             df = data_empresas[empresa].copy()
-
             col_cuenta = next((c for c in posibles_columnas_cuenta if c in df.columns), None)
             col_monto = next((c for c in posibles_columnas_monto if c in df.columns), None)
 
@@ -111,7 +111,7 @@ if selected == "BALANCE POR EMPRESA":
                 st.warning(f"⚠️ {empresa}: no se encontraron columnas válidas (Descripción / Saldo).")
                 continue
 
-            # --- Limpieza de texto ---
+            # --- Limpieza y estandarización ---
             df[col_cuenta] = df[col_cuenta].apply(limpiar_texto)
             df[col_monto] = (
                 df[col_monto]
@@ -120,12 +120,16 @@ if selected == "BALANCE POR EMPRESA":
             )
             df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
 
-            # --- Merge con mapeo (solo una hoja de mapeo) ---
+            # --- Merge exacto por Descripción ---
             df_merged = df.merge(
                 df_mapeo[["Descripción", "CLASIFICACION", "CATEGORIA"]],
                 on="Descripción",
-                how="left"
+                how="inner"  # solo coincidencias exactas
             )
+
+            if df_merged.empty:
+                st.warning(f"⚠️ {empresa}: no se encontraron coincidencias exactas en el mapeo.")
+                continue
 
             # --- Agrupar y sumar ---
             resumen = (
@@ -135,20 +139,26 @@ if selected == "BALANCE POR EMPRESA":
                 .rename(columns={col_monto: empresa})
             )
             resultados.append(resumen)
+            balances_individuales[empresa] = resumen.copy()
 
         if not resultados:
             st.error("❌ No se pudo generar información consolidada.")
             return
 
-        # --- Unir todas las empresas ---
-        df_final = reduce(lambda l, r: pd.merge(l, r, on=["CLASIFICACION", "CATEGORIA"], how="outer"), resultados).fillna(0)
+        # --- Consolidar todas las empresas ---
+        df_final = reduce(
+            lambda l, r: pd.merge(l, r, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
+            resultados
+        ).fillna(0)
+
         df_final["TOTAL ACUMULADO"] = df_final[hojas_empresas].sum(axis=1)
 
-        # --- Mostrar por clasificación ---
+        # --- Mostrar balances por clasificación ---
         for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
             df_clasif = df_final[df_final["CLASIFICACION"] == clasif].copy()
             if df_clasif.empty:
                 continue
+
             subtotal = pd.DataFrame({
                 "CLASIFICACION": [clasif],
                 "CATEGORIA": [f"TOTAL {clasif}"]
@@ -163,7 +173,7 @@ if selected == "BALANCE POR EMPRESA":
             with st.expander(f"🔹 {clasif}"):
                 st.dataframe(df_clasif.drop(columns=["CLASIFICACION"]), use_container_width=True, hide_index=True)
 
-        # --- Resumen final ---
+        # --- Resumen total ---
         totales = {
             "ACTIVO": df_final[df_final["CLASIFICACION"] == "ACTIVO"]["TOTAL ACUMULADO"].sum(),
             "PASIVO": df_final[df_final["CLASIFICACION"] == "PASIVO"]["TOTAL ACUMULADO"].sum(),
@@ -187,6 +197,43 @@ if selected == "BALANCE POR EMPRESA":
             st.success("✅ El balance está cuadrado (ACTIVO = PASIVO + CAPITAL).")
         else:
             st.error("❌ El balance no cuadra. Revisa los saldos individuales.")
+
+        # =======================================================
+        # 📤 EXPORTACIÓN A EXCEL
+        # =======================================================
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            # Guardar cada empresa en su propia hoja
+            for empresa, df_emp in balances_individuales.items():
+                df_emp.to_excel(writer, index=False, sheet_name=empresa)
+                ws = writer.sheets[empresa]
+                ws.set_column("A:A", 20)
+                ws.set_column("B:B", 40)
+                ws.set_column("C:C", 20)
+
+            # Hoja consolidada
+            df_final.to_excel(writer, index=False, sheet_name="Consolidado")
+            ws = writer.sheets["Consolidado"]
+            ws.set_column("A:B", 25)
+            ws.set_column("C:Z", 18)
+
+            # Hoja resumen
+            resumen_final.to_excel(writer, index=False, sheet_name="Resumen")
+            ws = writer.sheets["Resumen"]
+            ws.set_column("A:A", 30)
+            ws.set_column("B:B", 20)
+
+            workbook = writer.book
+            money_format = workbook.add_format({"num_format": "$#,##0.00"})
+            for ws in writer.sheets.values():
+                ws.set_column("C:Z", 18, money_format)
+
+        st.download_button(
+            label="💾 Descargar Balance Consolidado en Excel",
+            data=output.getvalue(),
+            file_name="Balance_Consolidado_Por_Empresa.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     tabla_balance_por_empresa()
 
@@ -1003,6 +1050,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
