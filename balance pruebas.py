@@ -70,14 +70,14 @@ if selected == "BALANCE POR EMPRESA":
             df_mapeo = pd.read_excel(file, engine="openpyxl")
             df_mapeo.columns = df_mapeo.columns.str.strip()
 
-            if "Cuenta" not in df_mapeo.columns:
-                st.error("❌ La hoja de mapeo debe contener una columna llamada 'Cuenta'.")
+            if "Descripción" not in df_mapeo.columns:
+                st.error("❌ La hoja de mapeo debe contener una columna llamada 'Descripción'.")
                 return pd.DataFrame()
 
-            df_mapeo["Cuenta"] = df_mapeo["Cuenta"].apply(limpiar_texto)
+            df_mapeo["Descripción"] = df_mapeo["Descripción"].apply(limpiar_texto)
             df_mapeo = (
-                df_mapeo.dropna(subset=["Cuenta"])
-                        .drop_duplicates(subset=["Cuenta"], keep="first")
+                df_mapeo.dropna(subset=["Descripción"])
+                        .drop_duplicates(subset=["Descripción"], keep="first")
             )
             return df_mapeo
 
@@ -102,7 +102,7 @@ if selected == "BALANCE POR EMPRESA":
         df_mapeo = cargar_mapeo(mapeo_url)
         data_empresas = cargar_balance(balance_url, hojas_empresas)
 
-        posibles_columnas_cuenta = ["Cuenta", "Código", "No. Cuenta"]
+        posibles_columnas_cuenta = ["Descripción", "Código", "No. Cuenta"]
         posibles_columnas_monto = ["Saldo final", "Saldo", "Monto", "Importe", "Valor"]
 
         resultados = []
@@ -118,7 +118,7 @@ if selected == "BALANCE POR EMPRESA":
             col_monto = next((c for c in posibles_columnas_monto if c in df.columns), None)
 
             if not col_cuenta or not col_monto:
-                st.warning(f"⚠️ {empresa}: columnas inválidas ('Cuenta' / 'Saldo').")
+                st.warning(f"⚠️ {empresa}: columnas inválidas ('Descripción' / 'Saldo').")
                 continue
 
             df[col_cuenta] = df[col_cuenta].apply(limpiar_texto)
@@ -133,15 +133,15 @@ if selected == "BALANCE POR EMPRESA":
             df = df.groupby(col_cuenta, as_index=False)[col_monto].sum()
 
             # --- Auditoría: cuentas que no existen en el mapeo ---
-            cuentas_no_en_mapeo = df.loc[~df[col_cuenta].isin(df_mapeo["Cuenta"])]
+            cuentas_no_en_mapeo = df.loc[~df[col_cuenta].isin(df_mapeo["Descripción"])]
             if not cuentas_no_en_mapeo.empty:
                 cuentas_no_en_mapeo["EMPRESA"] = empresa
                 cuentas_no_mapeadas.append(cuentas_no_en_mapeo)
 
             # --- Merge exacto ---
             df_merged = df.merge(
-                df_mapeo[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
-                on="Cuenta",
+                df_mapeo[["Descripción", "CLASIFICACION", "CATEGORIA"]],
+                on="Descripción",
                 how="inner"
             )
 
@@ -200,7 +200,7 @@ if selected == "BALANCE POR EMPRESA":
                         if not df_detalle.empty:
                             st.markdown(f"**{empresa} — detalle de cuentas:**")
                             st.dataframe(
-                                df_detalle[["CATEGORIA", "Cuenta", col_monto]].style.format({col_monto: "${:,.2f}"}),
+                                df_detalle[["CATEGORIA", "Descripción", col_monto]].style.format({col_monto: "${:,.2f}"}),
                                 use_container_width=True,
                                 hide_index=True
                             )
@@ -1091,6 +1091,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
