@@ -200,9 +200,8 @@ if selected == "BALANCE POR EMPRESA":
             resultados
         ).fillna(0)
         df_final["TOTAL ACUMULADO"] = df_final[EMPRESAS].sum(axis=1)
-
-       utilidades_por_empresa = {d["EMPRESA"]: d["UTILIDAD DEL EJE"] for d in data_resultados} if data_resultados else {}
-
+        
+        utilidades_por_empresa = {d["EMPRESA"]: d["UTILIDAD DEL EJE"] for d in data_resultados} if data_resultados else {}
         for clasif in CLASIFICACIONES_PRINCIPALES:
             st.markdown(f"### 🔹 {clasif}")
             df_clasif = df_final[df_final["CLASIFICACION"] == clasif].copy()
@@ -794,6 +793,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
