@@ -232,7 +232,7 @@ if selected == "BALANCE POR EMPRESA":
             c: df_final[df_final["CLASIFICACION"] == c]["TOTAL ACUMULADO"].sum()
             for c in CLASIFICACIONES_PRINCIPALES
         }
-        diferencia = totales["ACTIVO"] - (totales["PASIVO"] + totales["CAPITAL"])
+        diferencia = totales["ACTIVO"] + (totales["PASIVO"] + totales["CAPITAL"])
 
         resumen_final = pd.DataFrame({
             "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA (Debe ser 0)"],
@@ -769,6 +769,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
