@@ -308,7 +308,7 @@ if selected == "BALANCE POR EMPRESA":
         if total_capital_con_utilidad != 0:
             totales["CAPITAL"] = total_capital_con_utilidad
 
-        diferencia = totales["ACTIVO"] - (totales["PASIVO"] + totales["CAPITAL"])
+        diferencia = totales["ACTIVO"] + (totales["PASIVO"] + totales["CAPITAL"])
 
         resumen_final = pd.DataFrame({
             "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL (con utilidad del eje)", "DIFERENCIA (Debe ser 0)"],
@@ -781,6 +781,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
