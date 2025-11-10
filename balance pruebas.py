@@ -7,7 +7,7 @@ from functools import reduce
 import xlsxwriter
 
 st.set_page_config(
-    page_title="Esgari 360",
+    page_title="Balance General",
     page_icon="🚚",  # <- icono de camión
     layout="wide"    # <- modo pantalla completa
 )
@@ -733,6 +733,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
