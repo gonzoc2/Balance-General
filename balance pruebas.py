@@ -200,7 +200,9 @@ if selected == "BALANCE POR EMPRESA":
         ).fillna(0)
         df_final["TOTAL ACUMULADO"] = df_final[EMPRESAS].sum(axis=1)
 
-
+        # =========================================================
+        # 📈 TABLA DE RESULTADOS (INGRESOS, GASTOS, UTILIDAD DEL EJE)
+        # =========================================================
         st.markdown("### 📊 Estado de Resultados por Empresa")
 
         data_resultados = []
@@ -211,7 +213,7 @@ if selected == "BALANCE POR EMPRESA":
 
             ingresos = df_emp.loc[df_emp["CLASIFICACION"] == "INGRESO", col_monto].sum()
             gastos = df_emp.loc[df_emp["CLASIFICACION"] == "GASTOS", col_monto].sum()
-            utilidad = ingresos + gastos
+            utilidad = ingresos + gastos  # Nota: ingresos son negativos
             data_resultados.append({
                 "EMPRESA": empresa,
                 "INGRESO": ingresos,
@@ -238,7 +240,11 @@ if selected == "BALANCE POR EMPRESA":
         else:
             st.info("No se encontraron cuentas clasificadas como 'INGRESO' o 'GASTOS' en el mapeo.")
 
+        # =========================================================
+        # 🔹 BALANCE GENERAL (con Utilidad del Eje dentro del Capital)
+        # =========================================================
         utilidades_por_empresa = {d["EMPRESA"]: d["UTILIDAD DEL EJE"] for d in data_resultados} if data_resultados else {}
+        total_capital_con_utilidad = 0  # ← acumulador global del capital actualizado
 
         for clasif in CLASIFICACIONES_PRINCIPALES:
             st.markdown(f"### 🔹 {clasif}")
@@ -267,6 +273,10 @@ if selected == "BALANCE POR EMPRESA":
                 subtotal[col] = df_clasif[col].sum() if pd.api.types.is_numeric_dtype(df_clasif[col]) else 0
             df_clasif = pd.concat([df_clasif, subtotal], ignore_index=True)
 
+            # --- Guardar total capital actualizado para resumen ---
+            if clasif == "CAPITAL":
+                total_capital_con_utilidad = float(subtotal["TOTAL ACUMULADO"].iloc[0])
+
             # === Formateo de montos ===
             for col in EMPRESAS + ["TOTAL ACUMULADO"]:
                 df_clasif[col] = df_clasif[col].apply(lambda x: f"${x:,.2f}")
@@ -285,14 +295,23 @@ if selected == "BALANCE POR EMPRESA":
                         "↳ Reflejadas en la fila *UTILIDAD DEL EJE* y sumadas al *TOTAL CAPITAL*.",
                         unsafe_allow_html=True
                     )
+
+        # =========================================================
+        # 📊 RESUMEN FINAL
+        # =========================================================
         totales = {
             c: df_final[df_final["CLASIFICACION"] == c]["TOTAL ACUMULADO"].sum()
             for c in CLASIFICACIONES_PRINCIPALES
         }
-        diferencia = totales["ACTIVO"] + (totales["PASIVO"] + totales["CAPITAL"])
+
+        # Reemplazar el capital del resumen con el del expander (ya incluye utilidad)
+        if total_capital_con_utilidad != 0:
+            totales["CAPITAL"] = total_capital_con_utilidad
+
+        diferencia = totales["ACTIVO"] - (totales["PASIVO"] + totales["CAPITAL"])
 
         resumen_final = pd.DataFrame({
-            "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA (Debe ser 0)"],
+            "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL (con utilidad del eje)", "DIFERENCIA (Debe ser 0)"],
             "Monto Total": [
                 f"${totales['ACTIVO']:,.2f}",
                 f"${totales['PASIVO']:,.2f}",
@@ -762,6 +781,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
