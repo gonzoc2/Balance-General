@@ -211,7 +211,7 @@ if selected == "BALANCE POR EMPRESA":
 
             ingresos = df_emp.loc[df_emp["CLASIFICACION"] == "INGRESO", col_monto].sum()
             gastos = df_emp.loc[df_emp["CLASIFICACION"] == "GASTOS", col_monto].sum()
-            utilidad = ingresos - gastos
+            utilidad = ingresos + gastos
             data_resultados.append({
                 "EMPRESA": empresa,
                 "INGRESO": ingresos,
@@ -762,6 +762,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
