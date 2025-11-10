@@ -201,7 +201,8 @@ if selected == "BALANCE POR EMPRESA":
         ).fillna(0)
         df_final["TOTAL ACUMULADO"] = df_final[EMPRESAS].sum(axis=1)
 
-        # --- Mostrar balance principal ---
+       utilidades_por_empresa = {d["EMPRESA"]: d["UTILIDAD DEL EJE"] for d in data_resultados} if data_resultados else {}
+
         for clasif in CLASIFICACIONES_PRINCIPALES:
             st.markdown(f"### 🔹 {clasif}")
             df_clasif = df_final[df_final["CLASIFICACION"] == clasif].copy()
@@ -209,23 +210,47 @@ if selected == "BALANCE POR EMPRESA":
                 st.info(f"No hay cuentas clasificadas como {clasif}.")
                 continue
 
+            # === Si es CAPITAL, agregamos UTILIDAD DEL EJE por empresa ===
+            if clasif == "CAPITAL" and utilidades_por_empresa:
+                fila_utilidad = pd.DataFrame({
+                    "CLASIFICACION": [clasif],
+                    "CATEGORIA": ["UTILIDAD DEL EJE"]
+                })
+
+                for empresa in EMPRESAS:
+                    fila_utilidad[empresa] = utilidades_por_empresa.get(empresa, 0.0)
+
+                fila_utilidad["TOTAL ACUMULADO"] = sum(fila_utilidad[empresa].iloc[0] for empresa in EMPRESAS)
+                df_clasif = pd.concat([df_clasif, fila_utilidad], ignore_index=True)
+
+            # === Subtotal por clasificación ===
             subtotal = pd.DataFrame({
                 "CLASIFICACION": [clasif],
                 "CATEGORIA": [f"TOTAL {clasif}"]
             })
             for col in EMPRESAS + ["TOTAL ACUMULADO"]:
-                subtotal[col] = df_clasif[col].sum()
+                subtotal[col] = df_clasif[col].sum() if pd.api.types.is_numeric_dtype(df_clasif[col]) else 0
             df_clasif = pd.concat([df_clasif, subtotal], ignore_index=True)
 
+            # === Formateo de montos ===
             for col in EMPRESAS + ["TOTAL ACUMULADO"]:
                 df_clasif[col] = df_clasif[col].apply(lambda x: f"${x:,.2f}")
 
-            with st.expander(f"📘 {clasif} (detalle de cuentas)"):
+            expanded_default = clasif == "CAPITAL"
+            with st.expander(f"📘 {clasif} (detalle de cuentas)", expanded=expanded_default):
                 st.dataframe(
                     df_clasif.drop(columns=["CLASIFICACION"]),
                     use_container_width=True,
                     hide_index=True
                 )
+
+                if clasif == "CAPITAL" and utilidades_por_empresa:
+                    st.markdown(
+                        "💵 **Las utilidades del eje por empresa fueron integradas automáticamente al capital.**<br>"
+                        "↳ Reflejadas en la fila *UTILIDAD DEL EJE* y sumadas al *TOTAL CAPITAL*.",
+                        unsafe_allow_html=True
+                    )
+
 
         # --- Resumen general ---
         totales = {
@@ -769,6 +794,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
