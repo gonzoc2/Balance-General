@@ -251,6 +251,9 @@ if selected == "BALANCE POR EMPRESA":
         else:
             st.error("❌ El balance no cuadra. Revisa las cuentas listadas.")
 
+        # =========================================================
+        # 💰 TABLA DE CUENTAS NO MAPEADAS Y CLASIFICADAS
+        # =========================================================
         if cuentas_no_mapeadas:
             df_no_mapeadas = pd.concat(cuentas_no_mapeadas, ignore_index=True)
             df_no_mapeadas = df_no_mapeadas.sort_values(["EMPRESA", col_cuenta])
@@ -269,6 +272,11 @@ if selected == "BALANCE POR EMPRESA":
                 df_resumen_ie.style.format({col_monto: "${:,.2f}"}),
                 use_container_width=True,
                 hide_index=True
+            )
+
+        # =========================================================
+        # 📈 TABLA DE RESULTADOS (INGRESOS, GASTOS, UTILIDAD DEL EJE)
+        # =========================================================
         st.markdown("### 📊 Estado de Resultados por Empresa")
 
         data_resultados = []
@@ -306,6 +314,10 @@ if selected == "BALANCE POR EMPRESA":
             )
         else:
             st.info("No se encontraron cuentas clasificadas como 'INGRESO' o 'GASTOS' en el mapeo.")
+
+        # =========================================================
+        # 💾 DESCARGA CONSOLIDADO PRINCIPAL
+        # =========================================================
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             for empresa, df_emp in balances_detallados.items():
@@ -757,6 +769,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
