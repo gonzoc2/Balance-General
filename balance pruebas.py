@@ -403,7 +403,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     st.warning(f"⚠️ No se encontró columna de descripción en {hoja_real}.")
                     continue
 
-            col_monto = next((c for c in ["Saldo", "Monto", "Importe", "Valor"] if c in df.columns), None)
+            col_monto = next((c for c in ["Saldo final", "Monto", "Importe", "Valor"] if c in df.columns), None)
             if not col_monto:
                 st.warning(f"⚠️ No se encontró columna de monto en {hoja_real}.")
                 continue
@@ -798,6 +798,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
