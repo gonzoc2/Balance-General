@@ -475,7 +475,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
     def tabla_balance_acumulado(total_social, total_inversiones, GOODWILL, balance_url, df_mapeo):
         st.subheader("📘 Balance General Acumulado")
 
-        iva_por_pagar = 0.0  # puedes ajustar este valor global si lo deseas
+        iva_por_pagar = 0.0 
 
         # --- Leer archivo Excel ---
         try:
@@ -493,11 +493,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             df = pd.read_excel(xls, sheet_name=hoja)
 
             # --- Normalizar columna de cuenta ---
-            if "Cuenta" not in df.columns:
+            if "Descripción" not in df.columns:
                 posibles = [c for c in COLUMNAS_CUENTA if c in df.columns]
                 col_cuenta = posibles[0] if posibles else None
                 if col_cuenta:
-                    df = df.rename(columns={col_cuenta: "Cuenta"})
+                    df = df.rename(columns={col_cuenta: "Descripción"})
 
             # --- Detectar columna de monto ---
             col_monto = next((c for c in COLUMNAS_MONTO if c in df.columns), None)
@@ -507,8 +507,8 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             # --- Preparar dataframe ---
             df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
             df_merged = df.merge(
-                df_mapeo[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
-                on="Cuenta",
+                df_mapeo[["Descripción", "CLASIFICACION", "CATEGORIA"]],
+                on="Descripción",
                 how="left"
             )
 
@@ -529,84 +529,47 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         df_total = reduce(
             lambda left, right: pd.merge(left, right, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
             data_empresas
-        )
-        df_total = df_total.fillna(0)
+        ).fillna(0)
+
+        # --- Calcular acumulado general ---
         df_total["ACUMULADO"] = df_total[
             [c for c in df_total.columns if c not in ["CLASIFICACION", "CATEGORIA"]]
         ].sum(axis=1)
-        df_total = df_total.rename(columns={"CATEGORIA": "CUENTA"})
+        df_total = df_total.rename(columns={"CATEGORIA": "Descripción"})
 
-        # ==================================================
-        # 💡 Ajustes automáticos de DEBE y HABER
-        # ==================================================
+        # --- Inicializar columnas base ---
         df_total["DEBE"] = 0.0
         df_total["HABER"] = 0.0
         df_total["MANUAL"] = 0.0
 
-        # Cuentas por cobrar
-        df_total.loc[
-            df_total["CUENTA"].str.contains("CUENTAS POR COBRAR NO FACTURADAS", case=False),
-            "DEBE"
-        ] = df_total["ACUMULADO"]
+        # --- Ajustes automáticos ---
+        df_total.loc[df_total["Descripción"].str.contains("CUENTAS POR COBRAR NO FACTURADAS", case=False), "DEBE"] = df_total["ACUMULADO"]
+        df_total.loc[df_total["Descripción"].str.contains("DEUDORES RELACIONADOS|IVA ACREDITABLE", case=False), "HABER"] = df_total["ACUMULADO"]
 
-        # Deudores / IVA acreditable → HABER
-        df_total.loc[
-            df_total["CUENTA"].str.contains("DEUDORES RELACIONADOS|IVA ACREDITABLE", case=False),
-            "HABER"
-        ] = df_total["ACUMULADO"]
-
-        # Impuestos diferidos
         activo_imp_dif = df_total.loc[
-            (df_total["CLASIFICACION"] == "ACTIVO")
-            & (df_total["CUENTA"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
+            (df_total["CLASIFICACION"] == "ACTIVO") &
+            (df_total["Descripción"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
             "HABER"
         ].sum()
         df_total.loc[
-            (df_total["CLASIFICACION"] == "PASIVO")
-            & (df_total["CUENTA"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
+            (df_total["CLASIFICACION"] == "PASIVO") &
+            (df_total["Descripción"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
             "DEBE"
         ] = activo_imp_dif
 
-        # IVA trasladado
-        iva_acred = df_total.loc[
-            df_total["CUENTA"].str.contains("IVA ACREDITABLE", case=False),
-            "ACUMULADO"
-        ].sum()
-        df_total.loc[
-            df_total["CUENTA"].str.contains("IVA POR TRASLADAR", case=False),
-            "DEBE"
-        ] = iva_acred
-        df_total.loc[
-            df_total["CUENTA"].str.contains("IVA POR TRASLADAR", case=False),
-            "HABER"
-        ] = iva_por_pagar
+        iva_acred = df_total.loc[df_total["Descripción"].str.contains("IVA ACREDITABLE", case=False), "ACUMULADO"].sum()
+        df_total.loc[df_total["Descripción"].str.contains("IVA POR TRASLADAR", case=False), "DEBE"] = iva_acred
+        df_total.loc[df_total["Descripción"].str.contains("IVA POR TRASLADAR", case=False), "HABER"] = iva_por_pagar
 
-        # Acreedores relacionados
-        deud_rel = df_total.loc[
-            df_total["CUENTA"].str.contains("DEUDORES RELACIONADOS", case=False),
-            "ACUMULADO"
-        ].sum()
-        df_total.loc[
-            df_total["CUENTA"].str.contains("ACREEDORES RELACIONADOS", case=False),
-            "DEBE"
-        ] = deud_rel * -1
+        deud_rel = df_total.loc[df_total["Descripción"].str.contains("DEUDORES RELACIONADOS", case=False), "ACUMULADO"].sum()
+        df_total.loc[df_total["Descripción"].str.contains("ACREEDORES RELACIONADOS", case=False), "DEBE"] = deud_rel * -1
 
-        # Goodwill
-        df_total.loc[
-            df_total["CUENTA"].str.contains("GOODWILL", case=False),
-            "DEBE"
-        ] = GOODWILL
+        df_total.loc[df_total["Descripción"].str.contains("GOODWILL", case=False), "DEBE"] = GOODWILL
 
-        # Capital social
         total_capital_social = total_social + total_inversiones
-        df_total.loc[
-            df_total["CUENTA"].str.contains("CAPITAL SOCIAL", case=False),
-            "DEBE"
-        ] = total_capital_social
+        df_total.loc[df_total["Descripción"].str.contains("CAPITAL SOCIAL", case=False), "DEBE"] = total_capital_social
 
-        # ==================================================
-        # 🧮 Calcular totales
-        # ==================================================
+        # --- Calcular totales ---
         df_total["TOTALES"] = (
             df_total["ACUMULADO"]
             + df_total["DEBE"]
@@ -614,54 +577,36 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             + df_total["MANUAL"]
         )
 
-        # ==================================================
-        # 📝 Edición manual persistente
-        # ==================================================
+        # --- Mantener edición manual persistente ---
         if "df_balance_manual" not in st.session_state:
             st.session_state["df_balance_manual"] = df_total.copy()
 
         df_editado = st.data_editor(
-            st.session_state["df_balance_manual"],
+            st.session_state["df_balance_manual"][["Descripción", "ACUMULADO", "DEBE", "HABER", "TOTALES"]],
             use_container_width=True,
             hide_index=True,
             num_rows="fixed",
             column_config={
-                "MANUAL": st.column_config.NumberColumn(
-                    "MANUAL (editable)",
-                    help="Valor manual editable",
-                    format="%.2f"
-                ),
+                "DEBE": st.column_config.NumberColumn("DEBE", format="%.2f"),
+                "HABER": st.column_config.NumberColumn("HABER", format="%.2f"),
+                "TOTALES": st.column_config.NumberColumn("TOTALES", format="%.2f"),
             },
             key="balance_acumulado_editor",
         )
 
-        # Recalcular totales tras edición
-        df_editado["TOTALES"] = (
-            df_editado["ACUMULADO"]
-            + df_editado["DEBE"]
-            - df_editado["HABER"]
-            + df_editado["MANUAL"]
-        )
-
-        st.session_state["df_balance_manual"] = df_editado
-
-        # ==================================================
-        # 💰 Mostrar tabla final
-        # ==================================================
+        # --- Mostrar tabla final solo con las columnas solicitadas ---
         st.dataframe(
             df_editado.style.format({
                 "ACUMULADO": "${:,.2f}",
                 "DEBE": "${:,.2f}",
                 "HABER": "${:,.2f}",
-                "MANUAL": "${:,.2f}",
                 "TOTALES": "${:,.2f}",
             }),
             use_container_width=True,
             hide_index=True
         )
 
-        st.info("🧩 Los valores manuales se guardan automáticamente y solo se recargan al presionar ♻️ Recargar manuales.")
-
+        st.info("🧩 Solo se muestran las columnas resumidas: **ACUMULADO, DEBE, HABER y TOTALES**. Los valores manuales se conservan automáticamente.")
         return df_editado
 
 
@@ -798,6 +743,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
