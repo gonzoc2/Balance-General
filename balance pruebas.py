@@ -472,10 +472,10 @@ elif selected == "BALANCE GENERAL ACUMULADO":
     # 2️⃣ TABLA DE BALANCE GENERAL ACUMULADO
     # =====================================================
  
-    def tabla_balance_acumulado(total_social, total_inversiones, GOODWILL, balance_url, df_mapeo):
-        st.subheader("📘 Balance General Acumulado")
+    def tabla_balance_acumulado(total_social, total_inversiones, GOODWILL, balance_url, df_mapeo, data_resultados=None):
+        st.subheader("📘 Balance General Acumulado (editable con filtros dinámicos)")
 
-        iva_por_pagar = 0.0 
+        iva_por_pagar = 0.0
 
         # --- Leer archivo Excel ---
         try:
@@ -484,28 +484,24 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             st.error(f"❌ Error al leer el archivo: {e}")
             return
 
-        # --- Procesar hojas ---
-        data_empresas = []
+        resultados = []
         for hoja in EMPRESAS:
             if hoja not in xls.sheet_names:
                 continue
 
             df = pd.read_excel(xls, sheet_name=hoja)
 
-            # --- Normalizar columna de cuenta ---
             if "Descripción" not in df.columns:
                 posibles = [c for c in COLUMNAS_CUENTA if c in df.columns]
-                col_cuenta = posibles[0] if posibles else None
-                if col_cuenta:
-                    df = df.rename(columns={col_cuenta: "Descripción"})
+                if posibles:
+                    df = df.rename(columns={posibles[0]: "Descripción"})
 
-            # --- Detectar columna de monto ---
             col_monto = next((c for c in COLUMNAS_MONTO if c in df.columns), None)
             if not col_monto:
                 continue
 
-            # --- Preparar dataframe ---
             df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
+
             df_merged = df.merge(
                 df_mapeo[["Descripción", "CLASIFICACION", "CATEGORIA"]],
                 on="Descripción",
@@ -515,99 +511,181 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             df_filtrado = df_merged[df_merged["CLASIFICACION"].isin(CLASIFICACIONES_PRINCIPALES)]
             resumen = (
                 df_filtrado.groupby(["CLASIFICACION", "CATEGORIA"])[col_monto]
-                .sum()
-                .reset_index()
-                .rename(columns={col_monto: hoja})
+                .sum().reset_index().rename(columns={col_monto: hoja})
             )
-            data_empresas.append(resumen)
+            resultados.append(resumen)
 
-        if not data_empresas:
+        if not resultados:
             st.warning("⚠️ No se encontraron datos válidos.")
             return
 
         # --- Consolidar balances ---
-        df_total = reduce(
-            lambda left, right: pd.merge(left, right, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
-            data_empresas
+        df_final = reduce(
+            lambda l, r: pd.merge(l, r, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
+            resultados
         ).fillna(0)
 
-        # --- Calcular acumulado general ---
-        df_total["ACUMULADO"] = df_total[
-            [c for c in df_total.columns if c not in ["CLASIFICACION", "CATEGORIA"]]
-        ].sum(axis=1)
-        df_total = df_total.rename(columns={"CATEGORIA": "Descripción"})
+        df_final["ACUMULADO"] = df_final[EMPRESAS].sum(axis=1)
+        df_final = df_final.rename(columns={"CATEGORIA": "Descripción"})
 
-        # --- Inicializar columnas base ---
-        df_total["DEBE"] = 0.0
-        df_total["HABER"] = 0.0
-        df_total["MANUAL"] = 0.0
+        # === Inicializar columnas base ===
+        df_final["DEBE"] = 0.0
+        df_final["HABER"] = 0.0
+        df_final["MANUAL"] = 0.0
 
-        # --- Ajustes automáticos ---
-        df_total.loc[df_total["Descripción"].str.contains("CUENTAS POR COBRAR NO FACTURADAS", case=False), "DEBE"] = df_total["ACUMULADO"]
-        df_total.loc[df_total["Descripción"].str.contains("DEUDORES RELACIONADOS|IVA ACREDITABLE", case=False), "HABER"] = df_total["ACUMULADO"]
+        # === Reglas automáticas ===
+        df_final.loc[
+            df_final["Descripción"].str.contains("CUENTAS POR COBRAR NO FACTURADAS", case=False),
+            "DEBE"
+        ] = df_final["ACUMULADO"]
 
-        activo_imp_dif = df_total.loc[
-            (df_total["CLASIFICACION"] == "ACTIVO") &
-            (df_total["Descripción"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
+        df_final.loc[
+            df_final["Descripción"].str.contains("DEUDORES RELACIONADOS|IVA ACREDITABLE", case=False),
+            "HABER"
+        ] = df_final["ACUMULADO"]
+
+        activo_imp_dif = df_final.loc[
+            (df_final["CLASIFICACION"] == "ACTIVO")
+            & (df_final["Descripción"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
             "HABER"
         ].sum()
-        df_total.loc[
-            (df_total["CLASIFICACION"] == "PASIVO") &
-            (df_total["Descripción"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
+        df_final.loc[
+            (df_final["CLASIFICACION"] == "PASIVO")
+            & (df_final["Descripción"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
             "DEBE"
         ] = activo_imp_dif
 
-        iva_acred = df_total.loc[df_total["Descripción"].str.contains("IVA ACREDITABLE", case=False), "ACUMULADO"].sum()
-        df_total.loc[df_total["Descripción"].str.contains("IVA POR TRASLADAR", case=False), "DEBE"] = iva_acred
-        df_total.loc[df_total["Descripción"].str.contains("IVA POR TRASLADAR", case=False), "HABER"] = iva_por_pagar
+        iva_acred = df_final.loc[
+            df_final["Descripción"].str.contains("IVA ACREDITABLE", case=False),
+            "ACUMULADO"
+        ].sum()
+        df_final.loc[
+            df_final["Descripción"].str.contains("IVA POR TRASLADAR", case=False),
+            "DEBE"
+        ] = iva_acred
+        df_final.loc[
+            df_final["Descripción"].str.contains("IVA POR TRASLADAR", case=False),
+            "HABER"
+        ] = iva_por_pagar
 
-        deud_rel = df_total.loc[df_total["Descripción"].str.contains("DEUDORES RELACIONADOS", case=False), "ACUMULADO"].sum()
-        df_total.loc[df_total["Descripción"].str.contains("ACREEDORES RELACIONADOS", case=False), "DEBE"] = deud_rel * -1
+        deud_rel = df_final.loc[
+            df_final["Descripción"].str.contains("DEUDORES RELACIONADOS", case=False),
+            "ACUMULADO"
+        ].sum()
+        df_final.loc[
+            df_final["Descripción"].str.contains("ACREEDORES RELACIONADOS", case=False),
+            "DEBE"
+        ] = deud_rel * -1
 
-        df_total.loc[df_total["Descripción"].str.contains("GOODWILL", case=False), "DEBE"] = GOODWILL
+        df_final.loc[
+            df_final["Descripción"].str.contains("GOODWILL", case=False),
+            "DEBE"
+        ] = GOODWILL
 
         total_capital_social = total_social + total_inversiones
-        df_total.loc[df_total["Descripción"].str.contains("CAPITAL SOCIAL", case=False), "DEBE"] = total_capital_social
+        df_final.loc[
+            df_final["Descripción"].str.contains("CAPITAL SOCIAL", case=False),
+            "DEBE"
+        ] = total_capital_social
 
-        # --- Calcular totales ---
-        df_total["TOTALES"] = (
-            df_total["ACUMULADO"]
-            + df_total["DEBE"]
-            - df_total["HABER"]
-            + df_total["MANUAL"]
-        )
+        # === Agregar utilidad del eje ===
+        utilidades_por_empresa = {d["EMPRESA"]: d["UTILIDAD DEL EJE"] for d in data_resultados} if data_resultados else {}
+        total_utilidad_eje = sum(utilidades_por_empresa.values()) if utilidades_por_empresa else 0.0
 
-        # --- Mantener edición manual persistente ---
-        if "df_balance_manual" not in st.session_state:
-            st.session_state["df_balance_manual"] = df_total.copy()
+        if total_utilidad_eje != 0:
+            nueva_fila = pd.DataFrame({
+                "CLASIFICACION": ["CAPITAL"],
+                "Descripción": ["UTILIDAD DEL EJE"],
+                "ACUMULADO": [total_utilidad_eje],
+                "DEBE": [0.0],
+                "HABER": [0.0],
+                "MANUAL": [0.0]
+            })
+            df_final = pd.concat([df_final, nueva_fila], ignore_index=True)
 
-        df_editado = st.data_editor(
-            st.session_state["df_balance_manual"][["Descripción", "ACUMULADO", "DEBE", "HABER", "TOTALES"]],
+        # === Calcular TOTALES ===
+        df_final["TOTALES"] = df_final["ACUMULADO"] + df_final["DEBE"] - df_final["HABER"] + df_final["MANUAL"]
+
+        # ===================================================
+        # 🔍 Filtro dinámico por clasificación
+        # ===================================================
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            clasif_opciones = ["TODAS"] + CLASIFICACIONES_PRINCIPALES
+            clasif_seleccionada = st.selectbox("🔎 Filtrar por clasificación:", clasif_opciones, index=0)
+        with col2:
+            st.write("")  # Espacio
+            st.info("Selecciona un tipo para mostrar solo ACTIVO, PASIVO o CAPITAL")
+
+        if clasif_seleccionada != "TODAS":
+            df_filtrado = df_final[df_final["CLASIFICACION"] == clasif_seleccionada]
+        else:
+            df_filtrado = df_final.copy()
+
+        # ===================================================
+        # 🧩 Tabla única editable
+        # ===================================================
+        if "df_balance_editable" not in st.session_state:
+            st.session_state["df_balance_editable"] = df_filtrado.copy()
+
+        df_editable = st.data_editor(
+            st.session_state["df_balance_editable"],
             use_container_width=True,
             hide_index=True,
             num_rows="fixed",
             column_config={
+                "MANUAL": st.column_config.NumberColumn("MANUAL (editable)", format="%.2f", help="Ajuste manual permitido"),
                 "DEBE": st.column_config.NumberColumn("DEBE", format="%.2f"),
                 "HABER": st.column_config.NumberColumn("HABER", format="%.2f"),
-                "TOTALES": st.column_config.NumberColumn("TOTALES", format="%.2f"),
             },
-            key="balance_acumulado_editor",
+            key="balance_unico_editor",
         )
 
-        # --- Mostrar tabla final solo con las columnas solicitadas ---
+        # --- Recalcular TOTALES tras edición ---
+        df_editable["TOTALES"] = df_editable["ACUMULADO"] + df_editable["DEBE"] - df_editable["HABER"] + df_editable["MANUAL"]
+        st.session_state["df_balance_editable"] = df_editable
+
+        # ===================================================
+        # 📊 Mostrar tabla final formateada
+        # ===================================================
         st.dataframe(
-            df_editado.style.format({
-                "ACUMULADO": "${:,.2f}",
-                "DEBE": "${:,.2f}",
-                "HABER": "${:,.2f}",
-                "TOTALES": "${:,.2f}",
+            df_editable[["CLASIFICACION", "Descripción", "ACUMULADO", "DEBE", "HABER", "MANUAL", "TOTALES"]]
+            .style.format({
+                "ACUMULADO": "${:,.2f}", "DEBE": "${:,.2f}", "HABER": "${:,.2f}",
+                "MANUAL": "${:,.2f}", "TOTALES": "${:,.2f}"
             }),
             use_container_width=True,
             hide_index=True
         )
 
-        st.info("🧩 Solo se muestran las columnas resumidas: **ACUMULADO, DEBE, HABER y TOTALES**. Los valores manuales se conservan automáticamente.")
-        return df_editado
+        # ===================================================
+        # 📈 Resumen Consolidado
+        # ===================================================
+        totales = {
+            c: df_editable.loc[df_editable["CLASIFICACION"] == c, "TOTALES"].sum()
+            for c in CLASIFICACIONES_PRINCIPALES
+        }
+
+        diferencia = totales["ACTIVO"] - (totales["PASIVO"] + totales["CAPITAL"])
+
+        resumen_final = pd.DataFrame({
+            "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL (con utilidad del eje)", "DIFERENCIA (Debe ser 0)"],
+            "Monto Total": [
+                f"${totales['ACTIVO']:,.2f}",
+                f"${totales['PASIVO']:,.2f}",
+                f"${totales['CAPITAL']:,.2f}",
+                f"${diferencia:,.2f}"
+            ]
+        })
+
+        st.markdown("### 📊 Resumen Consolidado")
+        st.dataframe(resumen_final, use_container_width=True, hide_index=True)
+
+        if abs(diferencia) < 1:
+            st.success("✅ El balance está cuadrado (ACTIVO = PASIVO + CAPITAL).")
+        else:
+            st.error("❌ El balance no cuadra. Revisa los ajustes manuales.")
+        return df_editable
 
 
     # =====================================================
@@ -743,6 +821,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
