@@ -349,13 +349,14 @@ if selected == "BALANCE POR EMPRESA":
 
 
 elif selected == "BALANCE GENERAL ACUMULADO":
+
     st.markdown("### 🔄 Control manual de edición")
     if st.button("♻️ Recargar manuales"):
         st.session_state.pop("df_balance_manual", None)
         st.success("✅ Datos manuales recargados correctamente.")
-    # =====================================================
+
     # 1️⃣ TABLA DE INVERSIONES ENTRE COMPAÑÍAS
-    # =====================================================
+
     def tabla_inversiones(balance_url, df_mapeo):
         st.subheader("📊 Inversiones entre Compañías (Activos)")
 
@@ -375,38 +376,42 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         except Exception as e:
             st.error(f"❌ Error al leer el archivo del balance: {e}")
             return 0, 0, 0
-
+        
+        xls_balance.sheet_names = [s.strip().upper() for s in xls_balance.sheet_names]
         data_inversiones = []
 
         for clave, info in inversiones_dict.items():
-            hoja, descripcion = info["hoja"], info["Descripción"]
+            hoja, descripcion = info["hoja"].strip().upper(), info["Descripción"]
             if hoja not in xls_balance.sheet_names:
+                st.warning(f"⚠️ Hoja '{hoja}' no encontrada en el archivo.")
                 continue
 
             df = pd.read_excel(xls_balance, sheet_name=hoja)
-            if "Descripción" not in df.columns:
-                posibles = [c for c in COLUMNAS_CUENTA if c in df.columns]
-                col_cuenta = posibles[0] if posibles else None
-                if col_cuenta:
-                    df = df.rename(columns={col_cuenta: "Descripción"})
+            df.columns = df.columns.str.strip().str.upper()
 
-            col_monto = next((c for c in COLUMNAS_MONTO if c in df.columns), None)
-            if not col_monto:
+            col_cuenta = next((c for c in ["DESCRIPCION", "CUENTA", "NOMBRE DE LA CUENTA"] if c in df.columns), None)
+            col_monto = next((c for c in ["SALDO FINAL", "SALDO", "MONTO", "IMPORTE", "VALOR"] if c in df.columns), None)
+            if not col_cuenta or not col_monto:
+                st.warning(f"⚠️ {hoja}: columnas de cuenta o monto no encontradas.")
                 continue
 
+            df = df.rename(columns={col_cuenta: "Descripción"})
             df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
-            df["Descripción"] = df["Descripción"].astype(str).str.strip().str.upper()
+            df["Descripción"] = df["Descripción"].astype(str).str.upper()
 
-            mask = df["Descripción"].str.contains(descripcion.upper(), na=False)
+            # Coincidencia flexible
+            pattern = descripcion.upper().replace(" ", ".*")
+            mask = df["Descripción"].str.contains(pattern, na=False, regex=True)
             monto = df.loc[mask, col_monto].sum()
 
-            data_inversiones.append({
-                "VARIABLE": clave,
-                "CUENTA": descripcion,
-                "ACTIVO": monto,
-                "SOCIAL": 0.0,
-                "TOTALES": monto
-            })
+            if monto != 0:
+                data_inversiones.append({
+                    "VARIABLE": clave,
+                    "CUENTA": descripcion,
+                    "ACTIVO": monto,
+                    "SOCIAL": 0.0,
+                    "TOTALES": monto
+                })
 
         if not data_inversiones:
             st.warning("⚠️ No se encontraron inversiones con las descripciones indicadas.")
@@ -449,7 +454,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         )
 
         return total_activo, total_social, GOODWILL
-
 
     # =====================================================
     # 2️⃣ TABLA DE BALANCE GENERAL ACUMULADO
@@ -781,6 +785,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
