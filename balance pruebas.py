@@ -371,55 +371,66 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "EHM-HOLDING": {"hoja": "EHM", "Descripción": "INVERSION ESGARI HOLDING"},
         }
 
+        # --- Leer archivo y normalizar nombres de hojas ---
         try:
             xls_balance = pd.ExcelFile(balance_url)
+            sheet_names_normalized = [s.strip().upper() for s in xls_balance.sheet_names]
         except Exception as e:
             st.error(f"❌ Error al leer el archivo del balance: {e}")
             return 0, 0, 0
-        
-        xls_balance.sheet_names = [s.strip().upper() for s in xls_balance.sheet_names]
+
         data_inversiones = []
 
+        # --- Iterar sobre inversiones ---
         for clave, info in inversiones_dict.items():
-            hoja, descripcion = info["hoja"].strip().upper(), info["Descripción"]
-            if hoja not in xls_balance.sheet_names:
-                st.warning(f"⚠️ Hoja '{hoja}' no encontrada en el archivo.")
+            hoja = info["hoja"].strip().upper()
+            descripcion = info["Descripción"].strip().upper()
+
+            # Validar existencia de hoja
+            if hoja not in sheet_names_normalized:
+                st.warning(f"⚠️ La hoja '{hoja}' no existe en el archivo.")
                 continue
 
-            df = pd.read_excel(xls_balance, sheet_name=hoja)
-            df.columns = df.columns.str.strip().str.upper()
+            hoja_real = xls_balance.sheet_names[sheet_names_normalized.index(hoja)]
+            df = pd.read_excel(xls_balance, sheet_name=hoja_real)
 
-            col_cuenta = next((c for c in ["DESCRIPCION", "CUENTA", "NOMBRE DE LA CUENTA"] if c in df.columns), None)
-            col_monto = next((c for c in ["SALDO FINAL", "SALDO", "MONTO", "IMPORTE", "VALOR"] if c in df.columns), None)
-            if not col_cuenta or not col_monto:
-                st.warning(f"⚠️ {hoja}: columnas de cuenta o monto no encontradas.")
+            # --- Normalizar columnas ---
+            if "Descripción" not in df.columns:
+                posibles = [c for c in ["Cuenta", "Concepto", "Nombre", "Descripcion"] if c in df.columns]
+                if posibles:
+                    df = df.rename(columns={posibles[0]: "Descripción"})
+                else:
+                    st.warning(f"⚠️ No se encontró columna de descripción en {hoja_real}.")
+                    continue
+
+            col_monto = next((c for c in ["Saldo", "Monto", "Importe", "Valor"] if c in df.columns), None)
+            if not col_monto:
+                st.warning(f"⚠️ No se encontró columna de monto en {hoja_real}.")
                 continue
 
-            df = df.rename(columns={col_cuenta: "Descripción"})
+            # --- Limpieza y búsqueda ---
             df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
-            df["Descripción"] = df["Descripción"].astype(str).str.upper()
+            df["Descripción"] = df["Descripción"].astype(str).str.strip().str.upper()
 
-            # Coincidencia flexible
-            pattern = descripcion.upper().replace(" ", ".*")
-            mask = df["Descripción"].str.contains(pattern, na=False, regex=True)
+            mask = df["Descripción"].str.contains(descripcion, na=False)
             monto = df.loc[mask, col_monto].sum()
 
-            if monto != 0:
-                data_inversiones.append({
-                    "VARIABLE": clave,
-                    "CUENTA": descripcion,
-                    "ACTIVO": monto,
-                    "SOCIAL": 0.0,
-                    "TOTALES": monto
-                })
+            data_inversiones.append({
+                "VARIABLE": clave,
+                "CUENTA": descripcion.title(),
+                "ACTIVO": monto,
+                "SOCIAL": 0.0,
+                "TOTALES": monto
+            })
 
+        # --- Si no hay resultados ---
         if not data_inversiones:
             st.warning("⚠️ No se encontraron inversiones con las descripciones indicadas.")
             return 0, 0, 0
 
         df_inv = pd.DataFrame(data_inversiones)
 
-        # Ajustes de capital social
+        # --- Ajuste de capital social ---
         for i, row in df_inv.iterrows():
             if row["VARIABLE"] == "HDL-WH":
                 df_inv.at[i, "SOCIAL"] = 14404988.06
@@ -428,10 +439,12 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
             df_inv.at[i, "TOTALES"] = row["ACTIVO"] - df_inv.at[i, "SOCIAL"]
 
+        # --- Calcular goodwill ---
         total_activo = df_inv["ACTIVO"].sum()
         total_social = df_inv["SOCIAL"].sum()
         GOODWILL = (total_activo + total_social) * -1
 
+        # --- Agregar goodwill a la tabla ---
         df_inv = pd.concat([
             df_inv,
             pd.DataFrame([{
@@ -443,6 +456,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             }])
         ], ignore_index=True)
 
+        # --- Mostrar tabla final ---
         st.dataframe(
             df_inv.style.format({
                 "ACTIVO": "${:,.2f}",
@@ -454,7 +468,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         )
 
         return total_activo, total_social, GOODWILL
-
     # =====================================================
     # 2️⃣ TABLA DE BALANCE GENERAL ACUMULADO
     # =====================================================
@@ -785,6 +798,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
