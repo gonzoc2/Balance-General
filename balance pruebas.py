@@ -104,9 +104,6 @@ selected = option_menu(
     orientation="horizontal"
 )
 
-# =========================================================
-# 🔹 BALANCE POR EMPRESA
-# =========================================================
 
 if selected == "BALANCE POR EMPRESA":
 
@@ -120,7 +117,6 @@ if selected == "BALANCE POR EMPRESA":
         balances_detallados = {}
         cuentas_no_mapeadas = []
         resumen_ingresos_egresos = []
-
         for empresa in EMPRESAS:
             if empresa not in data_empresas:
                 continue
@@ -133,50 +129,19 @@ if selected == "BALANCE POR EMPRESA":
                 st.warning(f"⚠️ {empresa}: columnas inválidas ('Cuenta' / 'Saldo').")
                 continue
 
-            # --- Limpieza de datos ---
             df[col_cuenta] = df[col_cuenta].apply(limpiar_cuenta)
-            df[col_monto] = (
-                df[col_monto]
-                .replace("[\$,]", "", regex=True)
-                .replace(",", "", regex=True)
-            )
+            df[col_monto] = df[col_monto].replace("[\$,]", "", regex=True)
             df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
 
-            # --- Agrupar cuentas repetidas ---
+            # Agrupar cuentas repetidas
             df = df.groupby(col_cuenta, as_index=False)[col_monto].sum()
-
-            # --- Cuentas no mapeadas ---
-            df_no_mapeadas = df.loc[~df[col_cuenta].isin(df_mapeo_local["Cuenta"])].copy()
-            if not df_no_mapeadas.empty:
-                df_no_mapeadas["EMPRESA"] = empresa
-                df_no_mapeadas[col_monto] = pd.to_numeric(df_no_mapeadas[col_monto], errors="coerce").fillna(0)
-
-                # --- Clasificación automática por umbrales ---
-                df_no_mapeadas["CLASIFICACION_AUTO"] = ""
-                df_no_mapeadas.loc[df_no_mapeadas[col_monto] > 400_000_000, "CLASIFICACION_AUTO"] = "INGRESO (>400M)"
-                df_no_mapeadas.loc[df_no_mapeadas[col_monto] < -500_000_000, "CLASIFICACION_AUTO"] = "EGRESO (<-500M)"
-                df_no_mapeadas.loc[
-                    (df_no_mapeadas[col_monto].between(500_000_000, 10**12)),
-                    "CLASIFICACION_AUTO"
-                ] = "EGRESO (>500M)"
-
-                # --- Filtrar y sumar relevantes ---
-                df_filtradas = df_no_mapeadas[df_no_mapeadas["CLASIFICACION_AUTO"] != ""].copy()
-                if not df_filtradas.empty:
-                    df_sumada = (
-                        df_filtradas.groupby(["EMPRESA", "CLASIFICACION_AUTO"], as_index=False)[col_monto]
-                        .sum()
-                        .sort_values(["EMPRESA", "CLASIFICACION_AUTO"], ascending=[True, False])
-                    )
-                    resumen_ingresos_egresos.append(df_sumada)
-
-                cuentas_no_mapeadas.append(df_no_mapeadas)
 
             # --- Merge con mapeo ---
             df_merged = df.merge(
                 df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
                 on="Cuenta", how="inner"
             )
+
             if df_merged.empty:
                 st.warning(f"⚠️ {empresa}: sin coincidencias exactas con el mapeo.")
                 continue
@@ -188,42 +153,71 @@ if selected == "BALANCE POR EMPRESA":
             resultados.append(resumen)
             balances_detallados[empresa] = df_merged.copy()
 
-        # --- Consolidar balances ---
         if not resultados:
             st.error("❌ No se pudo generar información consolidada.")
             return
+        data_resultados = []
+        for empresa, df_emp in balances_detallados.items():
+            if not {"CLASIFICACION", col_monto}.issubset(df_emp.columns):
+                continue
 
+            ingreso = df_emp.loc[df_emp["CLASIFICACION"] == "INGRESO", col_monto].sum()
+            gasto = df_emp.loc[df_emp["CLASIFICACION"] == "GASTOS", col_monto].sum()
+            utilidad = ingreso - gasto
+            data_resultados.append({
+                "EMPRESA": empresa,
+                "INGRESO": ingreso,
+                "GASTO": gasto,
+                "UTILIDAD DEL EJE": utilidad
+            })
+
+        df_resultados = pd.DataFrame(data_resultados)
+        st.markdown("### 📊 Estado de Resultados por Empresa")
+        st.dataframe(
+            df_resultados.style.format({
+                "INGRESO": "${:,.2f}",
+                "GASTO": "${:,.2f}",
+                "UTILIDAD DEL EJE": "${:,.2f}"
+            }),
+            use_container_width=True, hide_index=True
+        )
+
+        # Guardar utilidad consolidada global
+        utilidad_total = df_resultados["UTILIDAD DEL EJE"].sum()
+        st.session_state["UTILIDAD_EJE_TOTAL"] = utilidad_total
+        st.markdown(f"💵 **Utilidad del eje consolidada:** ${utilidad_total:,.2f}")
         df_final = reduce(
             lambda l, r: pd.merge(l, r, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
             resultados
         ).fillna(0)
+
         df_final["TOTAL ACUMULADO"] = df_final[EMPRESAS].sum(axis=1)
+        st.session_state["df_final_empresa"] = df_final
 
-        #
+        utilidades_por_empresa = {
+            d["EMPRESA"]: d["UTILIDAD DEL EJE"] for d in data_resultados
+        }
 
-        utilidades_por_empresa = {d["EMPRESA"]: d["UTILIDAD DEL EJE"] for d in data_resultados} if data_resultados else {}
+        total_capital_con_utilidad = 0.0
 
         for clasif in CLASIFICACIONES_PRINCIPALES:
             st.markdown(f"### 🔹 {clasif}")
             df_clasif = df_final[df_final["CLASIFICACION"] == clasif].copy()
+
             if df_clasif.empty:
                 st.info(f"No hay cuentas clasificadas como {clasif}.")
                 continue
 
-            # === Si es CAPITAL, agregamos UTILIDAD DEL EJE por empresa ===
             if clasif == "CAPITAL" and utilidades_por_empresa:
                 fila_utilidad = pd.DataFrame({
                     "CLASIFICACION": [clasif],
                     "CATEGORIA": ["UTILIDAD DEL EJE"]
                 })
-
                 for empresa in EMPRESAS:
                     fila_utilidad[empresa] = utilidades_por_empresa.get(empresa, 0.0)
-
-                fila_utilidad["TOTAL ACUMULADO"] = sum(fila_utilidad[empresa].iloc[0] for empresa in EMPRESAS)
+                fila_utilidad["TOTAL ACUMULADO"] = fila_utilidad[EMPRESAS].sum(axis=1)
                 df_clasif = pd.concat([df_clasif, fila_utilidad], ignore_index=True)
 
-            # === Subtotal por clasificación ===
             subtotal = pd.DataFrame({
                 "CLASIFICACION": [clasif],
                 "CATEGORIA": [f"TOTAL {clasif}"]
@@ -232,34 +226,33 @@ if selected == "BALANCE POR EMPRESA":
                 subtotal[col] = df_clasif[col].sum() if pd.api.types.is_numeric_dtype(df_clasif[col]) else 0
             df_clasif = pd.concat([df_clasif, subtotal], ignore_index=True)
 
-            # === Formateo de montos ===
+            if clasif == "CAPITAL":
+                total_capital_con_utilidad = float(subtotal["TOTAL ACUMULADO"].iloc[0])
+
             for col in EMPRESAS + ["TOTAL ACUMULADO"]:
                 df_clasif[col] = df_clasif[col].apply(lambda x: f"${x:,.2f}")
 
             expanded_default = clasif == "CAPITAL"
-            with st.expander(f"📘 {clasif} (detalle de cuentas)", expanded=expanded_default):
+            with st.expander(f"📘 {clasif}", expanded=expanded_default):
                 st.dataframe(
                     df_clasif.drop(columns=["CLASIFICACION"]),
-                    use_container_width=True,
-                    hide_index=True
+                    use_container_width=True, hide_index=True
                 )
-
-                if clasif == "CAPITAL" and utilidades_por_empresa:
+                if clasif == "CAPITAL":
                     st.markdown(
-                        "**",
+                        "💵 **Las utilidades del eje por empresa fueron integradas automáticamente al capital.**",
                         unsafe_allow_html=True
                     )
 
-
-        # --- Resumen general ---
         totales = {
             c: df_final[df_final["CLASIFICACION"] == c]["TOTAL ACUMULADO"].sum()
             for c in CLASIFICACIONES_PRINCIPALES
         }
-        
-        st.session_state["df_final_empresa"] = df_final       
-       
-        diferencia = totales["ACTIVO"] + (totales["PASIVO"] + totales["CAPITAL"])
+
+        if total_capital_con_utilidad != 0:
+            totales["CAPITAL"] = total_capital_con_utilidad
+
+        diferencia = totales["ACTIVO"] - (totales["PASIVO"] + totales["CAPITAL"])
 
         resumen_final = pd.DataFrame({
             "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA (Debe ser 0)"],
@@ -270,6 +263,7 @@ if selected == "BALANCE POR EMPRESA":
                 f"${diferencia:,.2f}"
             ]
         })
+
         st.markdown("### 📊 Resumen Consolidado")
         st.dataframe(resumen_final, use_container_width=True, hide_index=True)
 
@@ -278,73 +272,13 @@ if selected == "BALANCE POR EMPRESA":
         else:
             st.error("❌ El balance no cuadra. Revisa las cuentas listadas.")
 
-        # =========================================================
-        # 💰 TABLA DE CUENTAS NO MAPEADAS Y CLASIFICADAS
-        # =========================================================
-        if cuentas_no_mapeadas:
-            df_no_mapeadas = pd.concat(cuentas_no_mapeadas, ignore_index=True)
-            df_no_mapeadas = df_no_mapeadas.sort_values(["EMPRESA", col_cuenta])
-            with st.expander("⚠️ Cuentas no mapeadas (revisar en catálogo)", expanded=False):
-                st.dataframe(
-                    df_no_mapeadas[["EMPRESA", col_cuenta, col_monto]]
-                    .style.format({col_monto: "${:,.2f}"}),
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-        if resumen_ingresos_egresos:
-            df_resumen_ie = pd.concat(resumen_ingresos_egresos, ignore_index=True)
-            st.markdown("### 💵 Cuentas mayores a umbrales por empresa")
-            st.dataframe(
-                df_resumen_ie.style.format({col_monto: "${:,.2f}"}),
-                use_container_width=True,
-                hide_index=True
-            )
-
-        # =========================================================
-        # 📈 TABLA DE RESULTADOS (INGRESOS, GASTOS, UTILIDAD DEL EJE)
-        # =========================================================
-        data_resultados = []
-
-        for empresa, df_emp in balances_detallados.items():
-            if not {"CLASIFICACION", col_monto}.issubset(df_emp.columns):
-                continue
-
-            ingresos = df_emp.loc[df_emp["CLASIFICACION"] == "INGRESO", col_monto].sum()
-            gastos = df_emp.loc[df_emp["CLASIFICACION"] == "GASTOS", col_monto].sum()
-            utilidad = ingresos - gastos
-            data_resultados.append({
-                "EMPRESA": empresa,
-                "INGRESO": ingresos,
-                "GASTO": gastos,
-                "UTILIDAD DEL EJE": utilidad
-            })
-
-        if data_resultados:
-            df_resultados = pd.DataFrame(data_resultados)
-            df_resultados = df_resultados.set_index("EMPRESA").T
-            df_resultados = df_resultados.loc[["INGRESO", "GASTO", "UTILIDAD DEL EJE"]]
-            df_resultados = df_resultados.applymap(lambda x: f"${x:,.2f}" if pd.notnull(x) else "-")
-
-            st.dataframe(df_resultados, use_container_width=True, hide_index=False)
-
-            utilidad_total = sum(emp["UTILIDAD DEL EJE"] for emp in data_resultados)
-            global UTILIDAD_EJE_TOTAL
-            UTILIDAD_EJE_TOTAL = utilidad_total
-        else:
-            st.info("No se encontraron cuentas clasificadas como 'INGRESO' o 'GASTOS' en el mapeo.")
-
-        # =========================================================
-        # 💾 DESCARGA CONSOLIDADO PRINCIPAL
-        # =========================================================
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             for empresa, df_emp in balances_detallados.items():
                 df_emp.to_excel(writer, index=False, sheet_name=empresa)
             df_final.to_excel(writer, index=False, sheet_name="Consolidado")
             resumen_final.to_excel(writer, index=False, sheet_name="Resumen")
-            if resumen_ingresos_egresos:
-                df_resumen_ie.to_excel(writer, index=False, sheet_name="Ctas_Mayores_Umbrales")
+
         st.download_button(
             label="💾 Descargar Excel Consolidado (por Cuenta)",
             data=output.getvalue(),
@@ -352,9 +286,9 @@ if selected == "BALANCE POR EMPRESA":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+    # Ejecutar función
     tabla_balance_por_empresa()
-#  =========================================================
-    
+
 
 elif selected == "BALANCE GENERAL ACUMULADO":
 
@@ -808,10 +742,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
         return df_final
 
-
-    # =====================================================
-    # 🔄 EJECUCIÓN PRINCIPAL
-    # =====================================================
     total_activo, total_social, GOODWILL = tabla_inversiones(balance_url, df_mapeo)
     df_balance = tabla_balance_acumulado(total_social, total_activo, GOODWILL, balance_url, df_mapeo)
     df_ingresos = tabla_ingresos_egresos(balance_url, df_mapeo)
@@ -881,6 +811,7 @@ elif selected == "BALANCE FINAL":
             file_name="Balance_Final.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+   
 
 
 
