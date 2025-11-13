@@ -26,7 +26,6 @@ st.markdown(
 )
 
 EMPRESAS = ["HOLDING", "FWD", "WH", "UBIKARGA", "EHM", "RESA", "GREEN"]
-
 COLUMNAS_CUENTA = ["Cuenta", "Descripción"]
 COLUMNAS_MONTO = ["Saldo final", "Saldo"]
 CLASIFICACIONES_PRINCIPALES = ["ACTIVO", "PASIVO", "CAPITAL"]
@@ -108,7 +107,7 @@ selected = option_menu(
 if selected == "BALANCE POR EMPRESA":
 
     def tabla_balance_por_empresa():
-        st.subheader("📘 Balance General por Empresa")
+        st.subheader("Balance General por Empresa")
 
         df_mapeo_local = cargar_mapeo(mapeo_url)
         data_empresas = cargar_balance(balance_url, EMPRESAS)
@@ -132,11 +131,7 @@ if selected == "BALANCE POR EMPRESA":
             df[col_cuenta] = df[col_cuenta].apply(limpiar_cuenta)
             df[col_monto] = df[col_monto].replace("[\$,]", "", regex=True)
             df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
-
-            # Agrupar cuentas repetidas
             df = df.groupby(col_cuenta, as_index=False)[col_monto].sum()
-
-            # --- Merge con mapeo ---
             df_merged = df.merge(
                 df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
                 on="Cuenta", how="inner"
@@ -241,7 +236,7 @@ if selected == "BALANCE POR EMPRESA":
                 df_clasif[col] = df_clasif[col].apply(lambda x: f"${x:,.2f}")
 
             expanded_default = clasif == "CAPITAL"
-            with st.expander(f"📘 {clasif}", expanded=expanded_default):
+            with st.expander(f"{clasif}", expanded=expanded_default):
                 st.dataframe(
                     df_clasif.drop(columns=["CLASIFICACION"]),
                     use_container_width=True, hide_index=True
@@ -263,7 +258,7 @@ if selected == "BALANCE POR EMPRESA":
         diferencia = totales["ACTIVO"] + (totales["PASIVO"] + totales["CAPITAL"])
 
         resumen_final = pd.DataFrame({
-            "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA (Debe ser 0)"],
+            "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA"],
             "Monto Total": [
                 f"${totales['ACTIVO']:,.2f}",
                 f"${totales['PASIVO']:,.2f}",
@@ -272,7 +267,7 @@ if selected == "BALANCE POR EMPRESA":
             ]
         })
 
-        st.markdown("### 📊 Resumen Consolidado")
+        st.markdown("### Resumen Consolidado")
         st.dataframe(resumen_final, use_container_width=True, hide_index=True)
         if abs(diferencia) < 1:
             st.success("✅ El balance está cuadrado (ACTIVO = PASIVO + CAPITAL).")
@@ -280,20 +275,20 @@ if selected == "BALANCE POR EMPRESA":
             st.error("❌ El balance no cuadra. Revisa las cuentas listadas.")
 
         for empresa in balances_detallados:
-            if "Descripcion" in df_mapeo.columns:
+            if "Descripción" in df_mapeo.columns:
                 balances_detallados[empresa] = balances_detallados[empresa].merge(
-                    df_mapeo[["Cuenta", "Descripcion"]],
+                    df_mapeo[["Cuenta", "Descripción"]],
                     on="Cuenta",
                     how="left"
                 )
-        if "Descripcion" in df_mapeo.columns:
+        if "Descripción" in df_mapeo.columns:
             df_final = df_final.merge(
-                df_mapeo[["Cuenta", "Descripcion"]],
+                df_mapeo[["Cuenta", "Descripción"]],
                 on="Cuenta",
                 how="left"
             )
             resumen_final = resumen_final.merge(
-                df_mapeo[["Cuenta", "Descripcion"]],
+                df_mapeo[["Cuenta", "Descripción"]],
                 on="Cuenta",
                 how="left"
             )
@@ -319,8 +314,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
     if st.button("♻️ Recargar manuales"):
         st.session_state.pop("df_balance_manual", None)
         st.success("✅ Datos manuales recargados correctamente.")
-    def tabla_inversiones(df_balance):
+    def tabla_inversiones(balance_url):
         st.subheader("Inversiones entre Compañías")
+
+        df_mapeo_local = cargar_mapeo(mapeo_url)
+        data_empresas = cargar_balance(balance_url, EMPRESAS)
 
         inversiones_dict = {
             "HDL-WH": {"hoja": "HOLDING", "Descripción": "INVERSION ESGARI WAREHOUSING"},
@@ -340,7 +338,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             t = t.replace("&", "AND").replace("-", " ").replace(".", "").replace(",", "")
             return " ".join(t.strip().upper().split()) 
         try:
-            xls_balance = pd.ExcelFile(df_balance)
+            xls_balance = pd.ExcelFile(balance_url)
             sheet_names_normalized = [s.strip().upper() for s in xls_balance.sheet_names]
         except Exception as e:
             st.error(f"❌ Error al leer el archivo del balance: {e}")
@@ -422,64 +420,84 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         st.session_state["GOODWILL"] = GOODWILL
         return total_activo, total_social, GOODWILL
 
-    def tabla_ingresos_egresos(df_balance, df_mapeo):
+    def tabla_ingresos_egresos(balance_url, df_mapeo):
         st.subheader("Ingresos, Gastos y Utilidad del Ejercicio")
+        data_empresas = cargar_balance(balance_url, EMPRESAS)
 
-        try:
-            xls = pd.ExcelFile(df_balance)
-        except Exception as e:
-            st.error(f"❌ Error al leer el archivo: {e}")
-            return
+        resultados = []
 
-        data_empresas = []
         for hoja in EMPRESAS:
-            if hoja not in xls.sheet_names:
+            if hoja not in data_empresas:
                 continue
 
-            df = pd.read_excel(xls, sheet_name=hoja)
-
-            if "Descripción" not in df.columns:
+            df = data_empresas[hoja].copy()
+            col_desc = next((c for c in df.columns if c.strip().upper() in ["DESCRIPCION", "DESCRIPCIÓN"]), None)
+            if col_desc:
+                df = df.rename(columns={col_desc: "Descripción"})
+            else:
                 posibles = [c for c in COLUMNAS_CUENTA if c in df.columns]
-                col_cuenta = posibles[0] if posibles else None
-                if col_cuenta:
-                    df = df.rename(columns={col_cuenta: "Descripción"})
-
+                if posibles:
+                    df = df.rename(columns={posibles[0]: "Descripción"})
+                else:
+                    st.warning(f"⚠️ {hoja}: No se encontró columna de descripción.")
+                    continue
             col_monto = next((c for c in COLUMNAS_MONTO if c in df.columns), None)
             if not col_monto:
+                st.warning(f"⚠️ {hoja}: No se encontró columna de montos.")
                 continue
 
-            df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
+            # Limpiar montos
+            df[col_monto] = (
+                df[col_monto]
+                .replace("[\$,]", "", regex=True)
+                .pipe(pd.to_numeric, errors="coerce")
+                .fillna(0)
+            )
+
+            # Merge mapeo
             df_merged = df.merge(
                 df_mapeo[["Descripción", "CLASIFICACION", "CATEGORIA"]],
-                on="Descripción", how="left"
+                on="Descripción",
+                how="left"
             )
             df_filtrado = df_merged[df_merged["CLASIFICACION"].isin(CLASIFICACIONES_RESULTADOS)]
 
-            resumen = df_filtrado.groupby("CLASIFICACION")[col_monto].sum().reset_index()
+            # Agrupar por clasificación
+            resumen = (
+                df_filtrado.groupby("CLASIFICACION")[col_monto]
+                .sum()
+                .reset_index()
+            )
+
             ingreso = resumen.loc[resumen["CLASIFICACION"] == "INGRESO", col_monto].sum()
             gasto = resumen.loc[resumen["CLASIFICACION"] == "GASTOS", col_monto].sum()
-            utilidad = ingreso - gasto
+            utilidad = ingreso + gasto 
 
-            data_empresas.append({
+            resultados.append({
                 "EMPRESA": hoja,
                 "INGRESOS": ingreso,
                 "GASTOS": gasto,
                 "UTILIDAD": utilidad
             })
-        df_final = pd.DataFrame(data_empresas)
+        df_final = pd.DataFrame(resultados)
         ingreso_total = df_final["INGRESOS"].sum()
         gasto_total = df_final["GASTOS"].sum()
         utilidad_total = ingreso_total + gasto_total
 
+        # Tabla final editable
         df_resultado = pd.DataFrame({
             "CLASIFICACIÓN": ["INGRESO", "GASTO", "UTILIDAD DEL EJE"],
             "RESULTADO": [ingreso_total, gasto_total, utilidad_total],
             "DEBE": [0.0, 0.0, 0.0],
             "HABER": [0.0, 0.0, 0.0]
         })
+
         df_resultado["TOTALES"] = (
-            df_resultado["RESULTADO"] + df_resultado["DEBE"] - df_resultado["HABER"]
+            df_resultado["RESULTADO"]
+            + df_resultado["DEBE"]
+            - df_resultado["HABER"]
         )
+
         if "df_ingresos_egresos" not in st.session_state:
             st.session_state["df_ingresos_egresos"] = df_resultado.copy()
 
@@ -489,14 +507,16 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             hide_index=True,
             num_rows="fixed",
             column_config={
-                "DEBE": st.column_config.NumberColumn("DEBE (editable)", help="Ajuste manual del debe", format="%.2f"),
-                "HABER": st.column_config.NumberColumn("HABER (editable)", help="Ajuste manual del haber", format="%.2f"),
+                "DEBE": st.column_config.NumberColumn("DEBE (editable)", format="%.2f"),
+                "HABER": st.column_config.NumberColumn("HABER (editable)", format="%.2f"),
             },
             key="tabla_ingresos_editor",
         )
 
         df_editado["TOTALES"] = (
-            df_editado["RESULTADO"] + df_editado["DEBE"] - df_editado["HABER"]
+            df_editado["RESULTADO"]
+            + df_editado["DEBE"]
+            - df_editado["HABER"]
         )
 
         st.session_state["df_ingresos_egresos"] = df_editado
@@ -516,6 +536,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         st.session_state["UTILIDAD_EJE_TOTAL"] = utilidad_total
 
         return df_editado, df_final
+
 
     def tabla_ingresos_gastos2(df_final):
         data = {
@@ -557,7 +578,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "RECONOCIMIENTO IMPUESTOS": [2_882_553.55],
         }
         df_editable = pd.DataFrame(data)
-        st.subheader("💸 Tabla de Gastos")
+        st.subheader("Tabla de Gastos")
         df_editado = st.data_editor(
             df_editable.style.format("${:,.2f}"),
             key="editor_gastos",
@@ -591,32 +612,41 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         "GASTOS FACTURADOS": [150_000_000, 50_000_000]
     })
 
-    def tabla_balance_acumulado(total_social, total_inversiones, GOODWILL, df_balance, df_mapeo, UTILIDAD_EJE_TOTAL,total_p_facturar):
-        st.subheader("📘 Balance General Acumulado")
+    def tabla_balance_acumulado(total_social, total_inversiones, GOODWILL, balance_url, mapeo_url, UTILIDAD_EJE_TOTAL,total_p_facturar):
+        st.subheader("Balance General Acumulado")
         iva_por_pagar = 0.0
-        try:
-            xls = pd.ExcelFile(df_balance)
-        except Exception as e:
-            st.error(f"❌ Error al leer el archivo: {e}")
-            return
+        df_mapeo = cargar_mapeo(mapeo_url)
+        data_empresas = cargar_balance(balance_url, EMPRESAS)
 
-        data_empresas = []
+        data_resumen = []
+
         for hoja in EMPRESAS:
-            if hoja not in xls.sheet_names:
+            if hoja not in data_empresas:
                 continue
 
-            df = pd.read_excel(xls, sheet_name=hoja)
-            if "Descripción" not in df.columns:
+            df = data_empresas[hoja].copy()
+
+            # Detectar columna de descripción
+            col_desc = next((c for c in df.columns if c.strip().upper() in ["DESCRIPCION", "DESCRIPCIÓN"]), None)
+            if col_desc:
+                df = df.rename(columns={col_desc: "Descripción"})
+            else:
                 posibles = [c for c in COLUMNAS_CUENTA if c in df.columns]
-                col_cuenta = posibles[0] if posibles else None
-                if col_cuenta:
-                    df = df.rename(columns={col_cuenta: "Descripción"})
+                if posibles:
+                    df = df.rename(columns={posibles[0]: "Descripción"})
+                else:
+                    st.warning(f"⚠️ {hoja}: No se encontró columna 'Descripción'.")
+                    continue
             col_monto = next((c for c in COLUMNAS_MONTO if c in df.columns), None)
             if not col_monto:
+                st.warning(f"⚠️ {hoja}: No se encontró columna de montos.")
                 continue
-
-            df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
-
+            df[col_monto] = (
+                df[col_monto]
+                .replace("[\$,]", "", regex=True)
+                .pipe(pd.to_numeric, errors="coerce")
+                .fillna(0)
+            )
             df_merged = df.merge(
                 df_mapeo[["Descripción", "CLASIFICACION", "CATEGORIA"]],
                 on="Descripción",
@@ -630,14 +660,14 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 .reset_index()
                 .rename(columns={col_monto: hoja})
             )
-            data_empresas.append(resumen)
+            data_resumen.append(resumen)
 
-        if not data_empresas:
+        if not data_resumen:
             st.warning("⚠️ No se encontraron datos válidos.")
             return
         df_total = reduce(
             lambda left, right: pd.merge(left, right, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
-            data_empresas
+            data_resumen
         ).fillna(0)
 
         df_total["ACUMULADO"] = df_total[
@@ -777,7 +807,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             if clasif == "CAPITAL":
                 total_capital_con_utilidad = float(subtotal["ACUMULADO"].iloc[0])
 
-            with st.expander(f"📘 {clasif} (detalle de cuentas)", expanded=(clasif == "CAPITAL")):
+            with st.expander(f"{clasif} (detalle de cuentas)", expanded=(clasif == "CAPITAL")):
                 st.dataframe(
                     df_clasif[["Descripción", "ACUMULADO", "DEBE", "HABER", "TOTALES"]]
                     .style.format({
@@ -825,7 +855,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         st.dataframe(resumen_final, use_container_width=True, hide_index=True)
 
         if abs(diferencia) < 1:
-            st.success("✅ El balance está cuadrado (ACTIVO = PASIVO + CAPITAL).")
+            st.success("✅ El balance está cuadrado")
         else:
             st.error("❌ El balance no cuadra. Revisa las cuentas listadas.")
 
@@ -845,21 +875,20 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         )
         return df_editado
 
-    total_activo, total_social, GOODWILL = tabla_inversiones(df_balance)
-    df_ingresos = tabla_ingresos_egresos(df_balance, df_mapeo)
+    total_activo, total_social, GOODWILL = tabla_inversiones(balance_url)
+    df_ingresos = tabla_ingresos_egresos(balance_url, df_mapeo)
     total_p_facturar = tabla_ingresos_gastos2(df_demo)
     tabla_gastos2(df_demo)
-    tabla_balance_acumulado(total_social, total_activo, GOODWILL, df_balance, df_mapeo, st.session_state["UTILIDAD_EJE_TOTAL"], total_p_facturar)
-
+    tabla_balance_acumulado(total_social, total_activo, GOODWILL, balance_url, df_mapeo, st.session_state["UTILIDAD_EJE_TOTAL"], total_p_facturar)
 
 elif selected == "BALANCE FINAL":
-    def tabla_BALANCE_FINAL(df_editable):
+    def tabla_BALANCE_FINAL(df_editado):
         st.subheader("BALANCE FINAL CONSOLIDADO")
-        df_totales = df_editable[["Descripción", "TOTALES"]].copy()
 
-        total_activo = df_editable.loc[df_editable["Descripción"] == "TOTAL ACTIVO", "TOTALES"].sum()
-        total_pasivo = df_editable.loc[df_editable["Descripción"] == "TOTAL PASIVO", "TOTALES"].sum()
-        total_capital = df_editable.loc[df_editable["Descripción"] == "TOTAL CAPITAL", "TOTALES"].sum()
+        df_totales = df_editado[["Descripción", "TOTALES"]].copy()
+        total_activo = df_editado.loc[df_editado["Descripción"] == "TOTAL ACTIVO", "TOTALES"].sum()
+        total_pasivo = df_editado.loc[df_editado["Descripción"] == "TOTAL PASIVO", "TOTALES"].sum()
+        total_capital = df_editado.loc[df_editado["Descripción"] == "TOTAL CAPITAL", "TOTALES"].sum()
         balance_final = total_activo + total_pasivo + total_capital
         df_total = pd.DataFrame({
             "Descripción": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "BALANCE FINAL"],
@@ -913,6 +942,7 @@ elif selected == "BALANCE FINAL":
         )
 
    
+
 
 
 
