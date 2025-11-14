@@ -338,7 +338,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             df = df_balance[hoja].copy()
             col_desc = None
             for c in df.columns:
-                if "DESCRIPCION" in c.upper():
+                if "Descripción" in c.upper():
                     col_desc = c
                     break
 
@@ -348,7 +348,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             df[col_desc] = df[col_desc].astype(str).apply(normalizar_texto)
             col_monto = None
             for c in df.columns:
-                if "SALDO FINAL" in c.upper():
+                if "Saldo final" in c.upper():
                     col_monto = c
                     break
             if not col_monto:
@@ -513,7 +513,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
     def tabla_ingresos_gastos2(df_final):
         data = {
             "INGRESOS REALES": [515_904_930.00],
-            "INGRESOS FACTURADOS": [df_final["INGRESOS FACTURADOS"].sum()],
+            "INGRESOS FACTURADOS": [df_final["INGRESOS"].sum()],
         }
         df_editable = pd.DataFrame(data)
         st.subheader("Tabla de Ingresos")
@@ -546,7 +546,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         data = {
             "GASTOS REALES": [475_282_087.13],
             "IMPUESTOS": [15_169_460.00],
-            "GASTOS FACTURADOS": [df_final["GASTOS FACTURADOS"].sum()],
+            "GASTOS FACTURADOS": [df_final["GASTOS"].sum()],
             "RECONOCIMIENTO IMPUESTOS": [2_882_553.55],
         }
         df_editable = pd.DataFrame(data)
@@ -964,6 +964,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
