@@ -76,6 +76,28 @@ def cargar_balance(url, hojas):
             st.warning(f"⚠️ No se pudo leer la hoja {hoja}: {e}")
     return data
 
+@st.cache_data(show_spinner="Cargando hojas de info manual...")
+def cargar_manual(url, hojas):
+    """Carga múltiples hojas desde un archivo Excel remoto manteniendo estabilidad del puntero."""
+    
+    r = requests.get(url)
+    r.raise_for_status()
+
+    file = BytesIO(r.content)
+    data = {}
+
+    for hoja in hojas:
+        try:
+            file.seek(0)
+            df = pd.read_excel(file, sheet_name=hoja, engine="openpyxl")
+            df.columns = df.columns.str.strip()
+            data[hoja] = df
+
+        except Exception as e:
+            st.warning(f"⚠️ No se pudo leer la hoja '{hoja}': {e}")
+
+    return data
+
 def limpiar_cuenta(x):
     """Limpia valores numéricos de la columna 'Cuenta'"""
     try:
@@ -954,6 +976,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
