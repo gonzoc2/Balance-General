@@ -342,7 +342,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         data_inversiones = []
 
         for clave, info in inversiones_dict.items():
-
             hoja = info["hoja"]
             cuenta_objetivo = info["Cuenta"]
 
@@ -351,6 +350,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 continue
 
             df = df_balance[hoja].copy()
+
             col_cuenta = next(
                 (c for c in df.columns if str(c).strip() in ["Cuenta", "codigo", "Código", "CODIGO", "CÓDIGO"]),
                 None
@@ -360,13 +360,12 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 st.error(f"❌ No se encontró columna de CUENTA en la hoja {hoja}.")
                 st.write("Columnas detectadas:", df.columns.tolist())
                 continue
-            col_monto = next(
-                (c for c in df.columns if "saldo final" in str(c).lower()),
-                None
-            )
+
+            col_monto = next((c for c in df.columns if "saldo final" in str(c).lower()), None)
             if not col_monto:
                 st.warning(f"⚠️ No se encontró columna de saldo final en '{hoja}'.")
                 continue
+
             df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
             df[col_monto] = (
                 df[col_monto]
@@ -374,6 +373,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 .pipe(pd.to_numeric, errors="coerce")
                 .fillna(0)
             )
+
             mask = df[col_cuenta] == cuenta_objetivo
             monto = df.loc[mask, col_monto].sum()
 
@@ -381,23 +381,30 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 st.info(f"ℹ️ No se encontró la cuenta {cuenta_objetivo} en hoja '{hoja}'.")
                 st.write("🔍 Cuentas detectadas:", df[col_cuenta].unique()[:20].tolist())
                 continue
-            social_val = 14_404_988.06 if clave == "HDL-WH" else monto
+            social_val = -14_404_988.06 if clave == "HDL-WH" else -monto
+
+            total_val = monto + social_val
 
             data_inversiones.append({
                 "GRUPO": clave,
                 "CUENTA": cuenta_objetivo,
                 "ACTIVO": monto,
                 "SOCIAL": social_val,
-                "TOTALES": monto - social_val
+                "TOTALES": total_val
             })
+
         if not data_inversiones:
             st.warning("⚠️ No se encontraron coincidencias en inversiones.")
             return 0, 0, 0
+
         df_inv = pd.DataFrame(data_inversiones)
 
         total_activo = df_inv["ACTIVO"].sum()
         total_social = df_inv["SOCIAL"].sum()
+
+        # GOODWILL = -(ACTIVO + SOCIAL) (misma fórmula que ya usabas)
         goodwill = (total_activo + total_social) * -1
+
         df_inv = pd.concat([
             df_inv,
             pd.DataFrame([{
@@ -422,6 +429,44 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         st.session_state["total_inversiones"] = total_activo
         st.session_state["total_social"] = total_social
         st.session_state["GOODWILL"] = goodwill
+
+        st.subheader("Consolidación Inversiones en Acciones")
+
+        df_consol = pd.DataFrame({
+            "CONCEPTO": [
+                "INVERSIONES EN ACCIONES",
+                "CAPITAL SOCIAL",
+                "GOODWILL"
+            ],
+            "DEBE": [
+                0.0,
+                -total_social,
+                -goodwill
+            ],
+            "HABER": [
+                total_activo,
+                0.0,
+                0.0
+            ]
+        })
+
+        df_consol = pd.concat([
+            df_consol,
+            pd.DataFrame([{
+                "CONCEPTO": "TOTAL",
+                "DEBE": df_consol["DEBE"].sum(),
+                "HABER": df_consol["HABER"].sum()
+            }])
+        ], ignore_index=True)
+
+        st.dataframe(
+            df_consol.style.format({
+                "DEBE": "${:,.2f}",
+                "HABER": "${:,.2f}",
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
 
         return total_activo, total_social, goodwill
 
@@ -571,7 +616,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
     def tabla_gastos2(df_resultado, info_manual):
 
-        st.subheader("Tabla de Gastos (Automática desde info_manual)")
+        st.subheader("Tabla de Gastos")
 
         data_manual = cargar_manual(info_manual, ["Hoja 3"])
         df_manual = data_manual.get("Hoja 3")
@@ -640,37 +685,28 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             ].iloc[0]
         except:
             ingreso_total_t = 0.0
+
         try:
             gasto_total_t = df_resultado.loc[
                 df_resultado["CLASIFICACIÓN"] == "GASTO", "TOTALES"
             ].iloc[0]
         except:
             gasto_total_t = 0.0
-        utilidad_total_real = ingreso_total_t + gasto_total_t   
-        try:
-            ingreso_resultado = df_resultado.loc[
-                df_resultado["CLASIFICACIÓN"] == "INGRESO", "RESULTADO"
-            ].iloc[0]
-        except:
-            ingreso_resultado = 0.0
 
-        try:
-            gasto_resultado = df_resultado.loc[
-                df_resultado["CLASIFICACIÓN"] == "GASTO", "RESULTADO"
-            ].iloc[0]
-        except:
-            gasto_resultado = 0.0
+        utilidad_total_real = ingreso_total_t + gasto_total_t
+        ingreso_resultado = ingreso_total_t
+        gasto_resultado   = gasto_total_t
+        utilidad_resultado = utilidad_total_real
 
-        utilidad_resultado = ingreso_resultado + gasto_resultado
         df_out = pd.DataFrame({
             "CLASIFICACIÓN": ["INGRESO", "GASTO", "UTILIDAD DEL EJE"],
             "RESULTADO": [ingreso_resultado, gasto_resultado, utilidad_resultado],
             "DEBE": [0.0, provision_gastos, 0.0],
             "HABER": [total_p_facturados, 0.0, 0.0]
         })
-
         df_out["TOTALES"] = df_out["RESULTADO"] + df_out["DEBE"] - df_out["HABER"]
         df_out.loc[df_out["CLASIFICACIÓN"] == "UTILIDAD DEL EJE", "TOTALES"] = utilidad_total_real
+
         st.session_state["df_ingresos_egresos2"] = df_out.copy()
         st.session_state["UTILIDAD_EJE_TOTAL"] = utilidad_total_real
 
@@ -691,18 +727,20 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
         st.subheader("Balance General Acumulado")
         df_mapeo = cargar_mapeo(mapeo_url)
-        df_mapeo.columns = df_mapeo.columns.str.strip() 
-        df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
+        df_mapeo.columns = df_mapeo.columns.str.strip()
+        if "Cuenta" in df_mapeo.columns:
+            df_mapeo["Cuenta"] = df_mapeo["Cuenta"].astype(str).str.strip()
 
+        df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
         data_empresas = cargar_balance(balance_url, EMPRESAS)
         data_resumen = []
         data_manual = cargar_manual(info_manual, ["CXP"])
         df_cxp = data_manual.get("CXP")
-
         debe_proveedores = 0.0
+
         if df_cxp is not None:
             df_cxp.columns = df_cxp.columns.str.strip()
-            col_debe = next((c for c in df_cxp.columns if "DEBE" in c.upper()), None)
+            col_debe = next((c for c in df_cxp.columns if "ACCOUNTED_DR" in c or "DEBE" in c), None)
             if col_debe:
                 try:
                     debe_proveedores = float(df_cxp[col_debe].sum())
@@ -716,20 +754,21 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 continue
 
             df = data_empresas[hoja].copy()
-            col_cuenta = next((c for c in df.columns if c.strip() == "Cuenta"), None)
+            col_cuenta = next((c for c in df.columns if "cuenta" in c.lower()), None)
             if not col_cuenta:
-                st.warning(f"⚠️ {hoja}: No se encontró la columna 'Cuenta'.")
+                st.warning(f"⚠️ {hoja}: No se encontró columna Cuenta.")
                 continue
-            col_monto = next((c for c in COLUMNAS_MONTO if c in df.columns), None)
+            col_monto = next((c for c in df.columns if "saldo" in c.lower()), None)
             if not col_monto:
                 st.warning(f"⚠️ {hoja}: No se encontró columna de montos.")
                 continue
+            df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
             df[col_monto] = (
                 df[col_monto].replace("[\$,]", "", regex=True)
                             .pipe(pd.to_numeric, errors="coerce")
                             .fillna(0)
             )
-            df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
+            df_mapeo["Cuenta"] = df_mapeo["Cuenta"].astype(str).str.strip()
             df_merged = df.merge(
                 df_mapeo[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
                 left_on=col_cuenta,
@@ -737,7 +776,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 how="left"
             )
             df_filtrado = df_merged[df_merged["CLASIFICACION"].isin(CLASIFICACIONES_PRINCIPALES)]
-
             if df_filtrado.empty:
                 continue
             resumen = (
@@ -749,14 +787,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
             data_resumen.append(resumen)
 
-        # === VALIDACIÓN ===
         if not data_resumen:
             st.error("❌ No se generó información para consolidación.")
             return None
-
-        # === CONSOLIDADO ===
         df_total = reduce(
-            lambda left, right: pd.merge(left, right, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
+            lambda l, r: pd.merge(l, r, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
             data_resumen
         ).fillna(0)
 
@@ -769,11 +804,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         df_total["DEBE"] = 0.0
         df_total["HABER"] = 0.0
         df_total["MANUAL"] = 0.0
-
         df_total.loc[
             df_total["CATEGORIA"].str.contains("IVA ACREDITABLE|DEUDORES RELACIONADOS|OTROS ACTIVOS", case=False),
             "HABER"
         ] = df_total["ACUMULADO"]
+
         imp_dif_activo = df_total.loc[
             (df_total["CLASIFICACION"] == "ACTIVO") &
             (df_total["CATEGORIA"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
@@ -785,38 +820,44 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             (df_total["CATEGORIA"].str.contains("IMPUESTOS DIFERIDOS", case=False)),
             "DEBE"
         ] = imp_dif_activo
+
         df_total.loc[
             (df_total["CLASIFICACION"] == "PASIVO") &
             (df_total["CATEGORIA"].str.contains("ISR", case=False)),
             "HABER"
-        ] = df_total.loc[
-            (df_total["CLASIFICACION"] == "PASIVO") &
-            (df_total["CATEGORIA"].str.contains("ISR", case=False)),
-            "ACUMULADO"
-        ]
+        ] = df_total["ACUMULADO"]
+
         iva_acred = df_total.loc[
             df_total["CATEGORIA"].str.contains("IVA ACREDITABLE", case=False),
             "ACUMULADO"
         ].sum()
 
-        df_total.loc[df_total["CATEGORIA"].str.contains("IVA POR TRASLADAR", case=False), "DEBE"] = iva_acred + iva_p_acreditar
+        df_total.loc[df_total["CATEGORIA"].str.contains("IVA POR TRASLADAR", case=False), "DEBE"] = (
+            iva_acred + iva_p_acreditar
+        )
         df_total.loc[df_total["CATEGORIA"].str.contains("IVA POR TRASLADAR", case=False), "HABER"] = iva_p_pagar
-        total_capital_social = total_social + total_activo
 
+        # Capital social ajustado
+        total_capital_social = total_social + total_activo
         df_total.loc[
             df_total["CATEGORIA"].str.contains("CAPITAL SOCIAL", case=False),
             "DEBE"
         ] = total_capital_social
+
         df_total["TOTALES"] = df_total["ACUMULADO"] + df_total["DEBE"] - df_total["HABER"]
+
+        # Preparar editor manual
         if "df_balance_manual" not in st.session_state:
             st.session_state["df_balance_manual"] = df_total.copy()
 
+        # Proveedores extra
         df_total.loc[
             (df_total["CLASIFICACION"] == "PASIVO") &
             (df_total["CATEGORIA"].str.contains("PROVEEDORES", case=False)),
             "DEBE"
         ] += debe_proveedores
 
+        # Editor
         df_editado = st.data_editor(
             st.session_state["df_balance_manual"],
             use_container_width=True,
@@ -828,24 +869,26 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             key="balance_acumulado_editor",
         )
 
+        # Recalcular totales
         df_editado["TOTALES"] = (
-            df_editado["ACUMULADO"] +
-            df_editado["DEBE"] -
-            df_editado["HABER"] +
-            df_editado["MANUAL"]
+            df_editado["ACUMULADO"] + df_editado["DEBE"] - df_editado["HABER"] + df_editado["MANUAL"]
         )
 
         st.session_state["df_balance_manual"] = df_editado
+
+        # === Mostrar por clasificación ===
         util_eje = UTILIDAD_EJE_TOTAL
         total_capital_con_utilidad = 0.0
+
         for clasif in CLASIFICACIONES_PRINCIPALES:
 
             df_clasif = df_editado[df_editado["CLASIFICACION"] == clasif].copy()
-
             df_clasif["Descripción"] = df_clasif.apply(
-                lambda row: row["Descripción"] if row["Descripción"] else row["CATEGORIA"],
+                lambda row: row.get("Descripción", row["CATEGORIA"]),
                 axis=1
             )
+
+            # Goodwill y cuentas por cobrar no facturadas
             if clasif == "ACTIVO":
 
                 fila_goodwill = pd.DataFrame({
@@ -870,6 +913,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
                 df_clasif = pd.concat([df_clasif, fila_goodwill, fila_no_fact], ignore_index=True)
 
+            # Utilidad del eje → capital
             if clasif == "CAPITAL":
 
                 fila_utilidad = pd.DataFrame({
@@ -884,6 +928,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
                 df_clasif = pd.concat([df_clasif, fila_utilidad], ignore_index=True)
 
+            # Subtotales
             subtotal = pd.DataFrame({
                 "CLASIFICACION": [clasif],
                 "Descripción": [f"TOTAL {clasif}"],
@@ -911,7 +956,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     use_container_width=True,
                     hide_index=True
                 )
-
         totales = {
             c: df_editado[df_editado["CLASIFICACION"] == c]["ACUMULADO"].sum()
             for c in CLASIFICACIONES_PRINCIPALES
@@ -938,7 +982,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         if abs(diferencia) < 1:
             st.success("✅ El balance está cuadrado")
         else:
-            st.error("❌ El balance no cuadra. Revisa los movimientos.")
+            st.error("❌ El balance NO cuadra. Revisar movimientos.")
 
         return df_editado
 
@@ -948,7 +992,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
     provision_gastos, iva_p_acreditar = tabla_gastos2(df_resultado, info_manual)
     df_ing_egr2 = tabla_ingresos_egresos2(total_p_facturados, df_resultado, provision_gastos)
     tabla_balance_acumulado(total_social, total_activo, goodwill, balance_url, mapeo_url, st.session_state["UTILIDAD_EJE_TOTAL"], total_p_facturar, iva_p_acreditar, iva_p_pagar)
-
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -1039,6 +1082,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
