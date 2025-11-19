@@ -355,7 +355,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 st.warning(f"⚠️ No se encontró columna de saldo final en '{hoja}'.")
                 continue
             col_cuenta = next(
-                (c for c in df.columns if str(c).strip().upper() in ["CUENTA", "CODIGO", "CÓDIGO"]),
+                (c for c in df.columns if str(c).strip().upper() in ["Cuenta", "CODIGO", "CÓDIGO"]),
                 None
             )
             if not col_cuenta:
@@ -720,7 +720,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         st.subheader("Balance General Acumulado")
         df_mapeo = cargar_mapeo(mapeo_url)
         df_mapeo.columns = df_mapeo.columns.str.upper().str.strip()
-        df_mapeo = df_mapeo.drop_duplicates(subset=["CUENTA"], keep="first")
+        df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
         data_empresas = cargar_balance(balance_url, EMPRESAS)
         data_resumen = []
         data_manual = cargar_manual(info_manual, ["CXP"])
@@ -747,7 +747,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             df = data_empresas[hoja].copy()
 
             # Detectar cuenta
-            col_cuenta = next((c for c in df.columns if "CUENTA" in c.upper()), None)
+            col_cuenta = next((c for c in df.columns if "Cuenta" in c.upper()), None)
             if not col_cuenta:
                 st.warning(f"⚠️ {hoja}: No se encontró columna de cuenta.")
                 continue
@@ -768,9 +768,9 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
             # --- MERGE POR CUENTA (CORREGIDO) ---
             df_merged = df.merge(
-                df_mapeo[["CUENTA", "CLASIFICACION", "CATEGORIA"]],
+                df_mapeo[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
                 left_on=col_cuenta,
-                right_on="CUENTA",
+                right_on="Cuenta",
                 how="left"
             )
 
@@ -1080,6 +1080,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
