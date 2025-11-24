@@ -731,7 +731,10 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         if "Cuenta" in df_mapeo.columns:
             df_mapeo["Cuenta"] = df_mapeo["Cuenta"].astype(str).str.strip()
 
-        df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
+        duplicadas = df_mapeo[df_mapeo.duplicated(subset=["Cuenta"], keep=False)]
+        if not duplicadas.empty:
+            df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first").reset_index(drop=True)
+
         data_empresas = cargar_balance(balance_url, EMPRESAS)
         data_resumen = []
         data_manual = cargar_manual(info_manual, ["CXP"])
@@ -804,6 +807,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         df_total["DEBE"] = 0.0
         df_total["HABER"] = 0.0
         df_total["MANUAL"] = 0.0
+
         df_total.loc[
             df_total["CATEGORIA"].str.contains("IVA ACREDITABLE|DEUDORES RELACIONADOS|OTROS ACTIVOS", case=False),
             "HABER"
@@ -836,8 +840,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             iva_acred + iva_p_acreditar
         )
         df_total.loc[df_total["CATEGORIA"].str.contains("IVA POR TRASLADAR", case=False), "HABER"] = iva_p_pagar
-
-        # Capital social ajustado
         total_capital_social = total_social + total_activo
         df_total.loc[
             df_total["CATEGORIA"].str.contains("CAPITAL SOCIAL", case=False),
@@ -845,12 +847,8 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         ] = total_capital_social
 
         df_total["TOTALES"] = df_total["ACUMULADO"] + df_total["DEBE"] - df_total["HABER"]
-
-        # Preparar editor manual
         if "df_balance_manual" not in st.session_state:
             st.session_state["df_balance_manual"] = df_total.copy()
-
-        # Proveedores extra
         df_total.loc[
             (df_total["CLASIFICACION"] == "PASIVO") &
             (df_total["CATEGORIA"].str.contains("PROVEEDORES", case=False)),
@@ -868,15 +866,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             },
             key="balance_acumulado_editor",
         )
-
-        # Recalcular totales
         df_editado["TOTALES"] = (
             df_editado["ACUMULADO"] + df_editado["DEBE"] - df_editado["HABER"] + df_editado["MANUAL"]
         )
 
         st.session_state["df_balance_manual"] = df_editado
-
-        # === Mostrar por clasificación ===
         util_eje = UTILIDAD_EJE_TOTAL
         total_capital_con_utilidad = 0.0
 
@@ -920,10 +914,10 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     "CLASIFICACION": ["CAPITAL"],
                     "Descripción": ["UTILIDAD DEL EJE"],
                     "ACUMULADO": [util_eje],
-                    "DEBE": [0.0],
+                    "DEBE": [total_social],
                     "HABER": [0.0],
                     "MANUAL": [0.0],
-                    "TOTALES": [util_eje]
+                    "TOTALES": [util_eje + total_social]
                 })
 
                 df_clasif = pd.concat([df_clasif, fila_utilidad], ignore_index=True)
@@ -957,14 +951,14 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     hide_index=True
                 )
         totales = {
-            c: df_editado[df_editado["CLASIFICACION"] == c]["ACUMULADO"].sum()
-            for c in CLASIFICACIONES_PRINCIPALES
+            c: df_editado[df_editado["CLASIFICACION"] == c]["TOTALES"].sum()
+            for c in CLASIFICACIONES_PRINCIPALES 
         }
 
         if total_capital_con_utilidad != 0:
             totales["CAPITAL"] = total_capital_con_utilidad
 
-        diferencia = totales["ACTIVO"] + totales["PASIVO"] + totales["CAPITAL"]
+        diferencia = df_total["ACTIVO"] + df_total["PASIVO"] + df_total["CAPITAL"]
 
         resumen_final = pd.DataFrame({
             "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA"],
@@ -983,6 +977,22 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             st.success("✅ El balance está cuadrado")
         else:
             st.error("❌ El balance NO cuadra. Revisar movimientos.")
+        
+        output = BytesIO()
+
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            for empresa, df_emp in data_resumen.items():
+                df_emp.to_excel(writer, index=False, sheet_name=empresa)
+
+            df_final.to_excel(writer, index=False, sheet_name="Consolidado")
+            resumen_final.to_excel(writer, index=False, sheet_name="Resumen")
+
+        st.download_button(
+            label="💾 Descargar Excel Consolidado",
+            data=output.getvalue(),
+            file_name="Balance_acumulado.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
         return df_editado
 
@@ -1020,68 +1030,125 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
 
 elif selected == "BALANCE FINAL":
-    def tabla_BALANCE_FINAL(df_editado):
-        st.subheader("BALANCE FINAL CONSOLIDADO")
 
-        df_totales = df_editado[["Descripción", "TOTALES"]].copy()
-        total_activo = df_editado.loc[df_editado["Descripción"] == "TOTAL ACTIVO", "TOTALES"].sum()
-        total_pasivo = df_editado.loc[df_editado["Descripción"] == "TOTAL PASIVO", "TOTALES"].sum()
-        total_capital = df_editado.loc[df_editado["Descripción"] == "TOTAL CAPITAL", "TOTALES"].sum()
-        balance_final = total_activo + total_pasivo + total_capital
-        df_total = pd.DataFrame({
-            "Descripción": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "BALANCE FINAL"],
-            "TOTALES": [total_activo, total_pasivo, total_capital, balance_final]
+    def tabla_BALANCE_FINAL(df_editado):
+        st.subheader("📊 BALANCE FINAL CONSOLIDADO")
+
+        if df_editado is None or df_editado.empty:
+            st.warning("No hay información para mostrar el Balance Final")
+            return
+
+        columnas = ["CLASIFICACION", "Descripción", "TOTALES"]
+        df_balance = df_editado[columnas].copy()
+
+        totales_dict = {}
+
+        for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
+
+            df_clasif = df_balance[df_balance["CLASIFICACION"] == clasif].copy()
+
+            if df_clasif.empty:
+                continue
+
+            total_valor = df_clasif["TOTALES"].sum()
+
+            total_fila = pd.DataFrame({
+                "CLASIFICACION": [clasif],
+                "Descripción": [f"TOTAL {clasif}"],
+                "TOTALES": [total_valor]
+            })
+
+            df_clasif = pd.concat([df_clasif, total_fila], ignore_index=True)
+
+            totales_dict[clasif] = total_valor
+
+            with st.expander(f"{clasif}", expanded=True if clasif == "ACTIVO" else False):
+
+                st.dataframe(
+                    df_clasif[["Descripción", "TOTALES"]]
+                    .style.format({"TOTALES": "${:,.2f}"}),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+        total_activo = totales_dict.get("ACTIVO", 0)
+        total_pasivo = totales_dict.get("PASIVO", 0)
+        total_capital = totales_dict.get("CAPITAL", 0)
+
+        diferencia = total_activo + total_pasivo + total_capital
+
+        resumen_final = pd.DataFrame({
+            "Descripción": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA"],
+            "MONTO": [
+                total_activo,
+                total_pasivo,
+                total_capital,
+                diferencia
+            ]
         })
-        global DEF_BALANCE_FINAL
-        if "DEF_BALANCE_FINAL" in globals():
-            DEF_BALANCE_FINAL = DEF_BALANCE_FINAL.merge(
-                df_total,
-                on="Descripción",
-                how="left",
-                suffixes=('', '_nuevo')
-            )
-            DEF_BALANCE_FINAL["TOTALES"] = DEF_BALANCE_FINAL["TOTALES_nuevo"].combine_first(DEF_BALANCE_FINAL["TOTALES"])
-            DEF_BALANCE_FINAL.drop(columns=["TOTALES_nuevo"], inplace=True)
-        else:
-            DEF_BALANCE_FINAL = df_total.copy()
+
+        st.markdown("## 📌 Resumen Final Consolidado")
 
         st.dataframe(
-            DEF_BALANCE_FINAL.style.format({"TOTALES": "${:,.2f}"}),
+            resumen_final.style.format({"MONTO": "${:,.2f}"}),
             use_container_width=True,
             hide_index=True
         )
 
-        if abs(balance_final) < 1:
-            st.success("✅ El balance general está cuadrado")
+        if abs(diferencia) < 1:
+            st.success("✅ El balance general está cuadrado (Activo = Pasivo + Capital)")
         else:
-            st.error("❌ El balance no cuadra. Revisa los montos.")
+            st.error(f"❌ El balance no cuadra. Diferencia: ${diferencia:,.2f}")
 
         output = BytesIO()
+
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            DEF_BALANCE_FINAL.to_excel(writer, index=False, sheet_name="Balance_Final")
+            for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
+                df_clasif = df_balance[df_balance["CLASIFICACION"] == clasif].copy()
+                if df_clasif.empty:
+                    continue
+                total_valor = df_clasif["TOTALES"].sum()
+                total_row = pd.DataFrame({
+                    "CLASIFICACION": [clasif],
+                    "Descripción": [f"TOTAL {clasif}"],
+                    "TOTALES": [total_valor]
+                })
+                df_clasif = pd.concat([df_clasif, total_row], ignore_index=True)
 
+                df_clasif[["Descripción", "TOTALES"]].to_excel(
+                    writer,
+                    sheet_name=clasif,
+                    index=False
+                )
+
+            resumen_final.to_excel(writer, sheet_name="Resumen Final", index=False)
             workbook = writer.book
-            worksheet = writer.sheets["Balance_Final"]
-            money_format = workbook.add_format({'num_format': '$#,##0.00', 'align': 'right'})
-            header_format = workbook.add_format({'bold': True, 'align': 'center', 'bg_color': '#D9E1F2'})
-
-            worksheet.set_row(0, None, header_format)
-            worksheet.set_column("A:A", 25)
-            worksheet.set_column("B:B", 20, money_format)
-            worksheet.set_h_pagebreaks([])
-            worksheet.set_v_pagebreaks([])
-            worksheet.fit_to_pages(1, 0)
+            for sheet_name in writer.sheets.keys():
+                worksheet = writer.sheets[sheet_name]
+                money_format = workbook.add_format({'num_format': '$#,##0.00', 'align': 'right'})
+                header_format = workbook.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
+                worksheet.set_row(0, None, header_format)
+                worksheet.set_column("A:A", 35)
+                worksheet.set_column("B:B", 25, money_format)
+                worksheet.freeze_panes(1, 0)
+                worksheet.fit_to_pages(1, 0)
 
         st.download_button(
             label="💾 Descargar Balance Final en Excel",
             data=output.getvalue(),
-            file_name="Balance_Final.xlsx",
+            file_name="Balance_Final_ESGARI.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+    if "df_balance_manual" in st.session_state:
+        tabla_BALANCE_FINAL(st.session_state["df_balance_manual"])
+    else:
+        st.warning("⚠️ Ejecuta primero el Balance Acumulado")
 
 
 
    
+
 
 
 
