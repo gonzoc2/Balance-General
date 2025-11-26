@@ -1043,7 +1043,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             for clasif in CLASIFICACIONES_PRINCIPALES:
 
                 df_export = df_editado[df_editado["CLASIFICACION"] == clasif][
-                    ["Descripción", "TOTALES"]
+                    ["Cuenta", "TOTALES"]
                 ].copy()
 
                 total = df_export["TOTALES"].sum()
@@ -1051,7 +1051,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 df_export = pd.concat([
                     df_export,
                     pd.DataFrame({
-                        "Descripción": [f"TOTAL {clasif}"],
+                        "Cuenta": [f"TOTAL {clasif}"],
                         "TOTALES": [total]
                     })
                 ])
@@ -1275,6 +1275,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
