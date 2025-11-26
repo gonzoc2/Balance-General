@@ -985,7 +985,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
             if clasif == "PASIVO":
 
-                fila_goodwill = pd.DataFrame({
+                fila_fletes = pd.DataFrame({
                     "CLASIFICACION": ["PASIVO"],
                     "Descripción": ["FLETES NO FACTURADOS"],
                     "ACUMULADO": [0.0],
@@ -995,7 +995,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     "TOTALES": [total_g_por_facturar]
                 })
 
-                df_clasif = pd.concat([df_clasif, fila_utilidad], ignore_index=True)
+                df_clasif = pd.concat([df_clasif, fila_fletes], ignore_index=True)
 
             if clasif == "CAPITAL":
 
@@ -1233,6 +1233,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
