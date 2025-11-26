@@ -905,7 +905,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "HABER"
         ] = iva_p_pagar
 
-        total_capital_social = total_social
+        total_capital_social = total_social*-1
         df_total.loc[
             df_total["CATEGORIA"].str.contains("CAPITAL SOCIAL", case=False),
             "DEBE"
@@ -1073,14 +1073,12 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
 elif selected == "BALANCE FINAL":
 
-    def tabla_BALANCE_FINAL(df_editado, goodwill, total_p_facturar, UTILIDAD_EJE_TOTAL):
-        st.subheader("📊 BALANCE FINAL (DESPUÉS DE DEBE / HABER)")
+    def tabla_BALANCE_FINAL(df_editado, goodwill, total_p_facturar, UTILIDAD_EJE_TOTAL, total_g_por_facturar):
+        st.subheader("BALANCE FINAL")
 
         if df_editado is None or df_editado.empty:
             st.warning("No hay información para mostrar el Balance Final")
             return
-
-        # ⬇️ Usamos ahora CATEGORIA en vez de Descripción
         columnas = ["CLASIFICACION", "CATEGORIA", "TOTALES"]
         df_balance = df_editado[columnas].copy()
 
@@ -1094,8 +1092,6 @@ elif selected == "BALANCE FINAL":
                 continue
 
             total_valor = df_clasif["TOTALES"].sum()
-
-            # ✅ Agregar fila TOTAL por clasificación
             total_fila = pd.DataFrame({
                 "CLASIFICACION": [clasif],
                 "CATEGORIA": [f"TOTAL {clasif}"],
@@ -1103,18 +1099,18 @@ elif selected == "BALANCE FINAL":
             })
 
             df_clasif = pd.concat([df_clasif, total_fila], ignore_index=True)
-
-            # ✅ Ajuste para que empate al BALANCE ACUMULADO
             if clasif == "ACTIVO":
                 totales_dict[clasif] = total_valor + goodwill + total_p_facturar
 
             elif clasif == "CAPITAL":
                 totales_dict[clasif] = total_valor + UTILIDAD_EJE_TOTAL
 
+            elif clasif == "PASIVO":
+                totales_dict[clasif] = total_valor + total_g_por_facturar
             else:
                 totales_dict[clasif] = total_valor
 
-            with st.expander(f"📘 {clasif}", expanded=True if clasif == "ACTIVO" else False):
+            with st.expander(f"{clasif}", expanded=True if clasif == "ACTIVO" else False):
 
                 st.dataframe(
                     df_clasif[["CATEGORIA", "TOTALES"]]
@@ -1126,8 +1122,6 @@ elif selected == "BALANCE FINAL":
         total_activo = totales_dict.get("ACTIVO", 0)
         total_pasivo = totales_dict.get("PASIVO", 0)
         total_capital = totales_dict.get("CAPITAL", 0)
-
-        # ✅ Fórmula correcta de cuadratura
         diferencia = total_activo + total_pasivo + total_capital
 
         resumen_final = pd.DataFrame({
@@ -1135,7 +1129,7 @@ elif selected == "BALANCE FINAL":
                 "TOTAL ACTIVO",
                 "TOTAL PASIVO",
                 "TOTAL CAPITAL",
-                "ACTIVO - (PASIVO + CAPITAL)"
+                "DIFERENCIA"
             ],
             "MONTO": [
                 total_activo,
@@ -1145,7 +1139,7 @@ elif selected == "BALANCE FINAL":
             ]
         })
 
-        st.markdown("## 📌 Resumen Final Después de Debe y Haber")
+        st.markdown("Resumen Final")
 
         st.dataframe(
             resumen_final.style.format({"MONTO": "${:,.2f}"}),
@@ -1153,7 +1147,6 @@ elif selected == "BALANCE FINAL":
             hide_index=True
         )
 
-        # 🔍 Ver cuentas incluidas en cada total
         with st.expander("🔍 Ver cuentas que forman cada total"):
             for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
                 st.markdown(f"### {clasif}")
@@ -1168,12 +1161,7 @@ elif selected == "BALANCE FINAL":
                         hide_index=True
                     )
 
-        if abs(diferencia) < 1:
-            st.success("✅ El balance general está correctamente cuadrado")
-        else:
-            st.error(f"❌ El balance NO cuadra. Diferencia: ${diferencia:,.2f}")
-
-        # 💾 EXPORTAR A EXCEL
+        # EXPORTAR A EXCEL
         output = BytesIO()
 
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -1205,13 +1193,12 @@ elif selected == "BALANCE FINAL":
 
                 df_export.to_excel(writer, index=False, sheet_name=clasif)
 
-            # Hoja resumen
             resumen_export = pd.DataFrame({
                 "Concepto": [
                     "TOTAL ACTIVO",
                     "TOTAL PASIVO",
                     "TOTAL CAPITAL",
-                    "ACTIVO - (PASIVO + CAPITAL)"
+                    "DIFERENCIA"
                 ],
                 "Monto": [
                     total_activo,
@@ -1249,13 +1236,16 @@ elif selected == "BALANCE FINAL":
         goodwill = st.session_state.get("goodwill", 0)
         total_p_facturar = st.session_state.get("total_p_facturar", 0)
         util_eje = st.session_state.get("UTILIDAD_EJE_TOTAL", 0)
-        tabla_BALANCE_FINAL(st.session_state["df_balance_manual"], goodwill, total_p_facturar, st.session_state["UTILIDAD_EJE_TOTAL"])
+        total_g_por_facturar = st.session_state.get("total_g_por_facturar", 0)
+
+        tabla_BALANCE_FINAL(st.session_state["df_balance_manual"], goodwill, total_p_facturar, util_eje, total_g_por_facturar)
     else:
         st.warning("⚠️ Ejecuta primero el Balance Acumulado")
 
 
 
    
+
 
 
 
