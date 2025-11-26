@@ -1074,17 +1074,15 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 elif selected == "BALANCE FINAL":
 
     def tabla_BALANCE_FINAL(df_editado):
-        st.subheader("📊 BALANCE FINAL (DESPUÉS DE DEBE / HABER)")
+        st.subheader("BALANCE FINAL")
 
         if df_editado is None or df_editado.empty:
             st.warning("No hay información para mostrar el Balance Final")
             return
-
-        columnas = ["CLASIFICACION", "Descripción", "TOTALES"]
+        columnas = ["CLASIFICACION", "CATEGORIA", "TOTALES"]
         df_balance = df_editado[columnas].copy()
 
         totales_dict = {}
-
         for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
 
             df_clasif = df_balance[df_balance["CLASIFICACION"] == clasif].copy()
@@ -1093,10 +1091,9 @@ elif selected == "BALANCE FINAL":
                 continue
 
             total_valor = df_clasif["TOTALES"].sum()
-
             total_fila = pd.DataFrame({
                 "CLASIFICACION": [clasif],
-                "Descripción": [f"TOTAL {clasif}"],
+                "CATEGORIA": [f"TOTAL {clasif}"],
                 "TOTALES": [total_valor]
             })
 
@@ -1107,19 +1104,18 @@ elif selected == "BALANCE FINAL":
             with st.expander(f"📘 {clasif}", expanded=True if clasif == "ACTIVO" else False):
 
                 st.dataframe(
-                    df_clasif[["Descripción", "TOTALES"]]
+                    df_clasif[["CATEGORIA", "TOTALES"]]
                     .style.format({"TOTALES": "${:,.2f}"}),
                     use_container_width=True,
                     hide_index=True
                 )
-
         total_activo = totales_dict.get("ACTIVO", 0)
         total_pasivo = totales_dict.get("PASIVO", 0)
         total_capital = totales_dict.get("CAPITAL", 0)
         diferencia = total_activo + total_pasivo + total_capital
 
         resumen_final = pd.DataFrame({
-            "Descripción": [
+            "Concepto": [
                 "TOTAL ACTIVO",
                 "TOTAL PASIVO",
                 "TOTAL CAPITAL",
@@ -1140,34 +1136,14 @@ elif selected == "BALANCE FINAL":
             use_container_width=True,
             hide_index=True
         )
-
-        with st.expander("🔍 Ver cuentas que forman cada total"):
-            for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
-                st.markdown(f"### {clasif}")
-                df_detalle = df_balance[df_balance["CLASIFICACION"] == clasif][
-                    ["Descripción", "TOTALES"]
-                ].copy()
-
-                if not df_detalle.empty:
-                    st.dataframe(
-                        df_detalle.style.format({"TOTALES": "${:,.2f}"}),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-
-        if abs(diferencia) < 1:
-            st.success("✅ El balance general está correctamente cuadrado")
-        else:
-            st.error(f"❌ El balance NO cuadra. Diferencia: ${diferencia:,.2f}")
-
         output = BytesIO()
 
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
 
-            # Hojas por clasificación
             for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
+
                 df_export = df_balance[df_balance["CLASIFICACION"] == clasif][
-                    ["Descripción", "TOTALES"]
+                    ["CATEGORIA", "TOTALES"]
                 ].copy()
 
                 if df_export.empty:
@@ -1178,14 +1154,13 @@ elif selected == "BALANCE FINAL":
                 df_export = pd.concat([
                     df_export,
                     pd.DataFrame({
-                        "Descripción": [f"TOTAL {clasif}"],
+                        "CATEGORIA": [f"TOTAL {clasif}"],
                         "TOTALES": [total]
                     })
                 ])
 
                 df_export.to_excel(writer, index=False, sheet_name=clasif)
 
-            # Hoja resumen
             resumen_export = pd.DataFrame({
                 "Concepto": [
                     "TOTAL ACTIVO",
@@ -1212,9 +1187,8 @@ elif selected == "BALANCE FINAL":
                 header_format = workbook.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
 
                 worksheet.set_row(0, None, header_format)
-                worksheet.set_column("A:A", 35)
+                worksheet.set_column("A:A", 40)
                 worksheet.set_column("B:B", 25, money_format)
-
                 worksheet.freeze_panes(1, 0)
                 worksheet.fit_to_pages(1, 0)
 
@@ -1232,7 +1206,9 @@ elif selected == "BALANCE FINAL":
 
 
 
+
    
+
 
 
 
