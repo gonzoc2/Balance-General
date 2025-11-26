@@ -767,9 +767,18 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
         df_mapeo = cargar_mapeo(mapeo_url)
         df_mapeo.columns = df_mapeo.columns.str.strip()
-        if "Cuenta" in df_mapeo.columns:
-            df_mapeo["Cuenta"] = df_mapeo["Cuenta"].astype(str).str.strip()
-
+        col_mapeo = next((c for c in df_mapeo.columns if "cuenta" in c.lower()), None)
+        if not col_mapeo:
+            st.error("❌ No se encontró columna 'Cuenta' en el mapeo.")
+            st.write("Columnas del archivo de mapeo:", df_mapeo.columns.tolist())
+            return None
+        df_mapeo.rename(columns={col_mapeo: "Cuenta"}, inplace=True)
+        df_mapeo["Cuenta"] = df_mapeo["Cuenta"].astype(str).str.strip()
+        df_mapeo["CLASIFICACION"] = df_mapeo["CLASIFICACION"].astype(str).str.strip()
+        df_mapeo["CATEGORIA"] = df_mapeo["CATEGORIA"].astype(str).str.strip()
+        df_mapeo = df_mapeo[
+            df_mapeo["CLASIFICACION"].isin(["ACTIVO", "PASIVO", "CAPITAL"])
+        ]
         df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
 
         data_empresas = cargar_balance(balance_url, EMPRESAS)
@@ -995,7 +1004,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             df_clasif = pd.concat([df_clasif, subtotal], ignore_index=True)
 
             if clasif == "CAPITAL":
-                total_capital_con_utilidad = float(subtotal["ACUMULADO"].iloc[0])
+                total_capital_con_utilidad = float(subtotal["TOTALES"].iloc[0])
 
             with st.expander(f"{clasif}", expanded=(clasif == "CAPITAL")):
                 st.dataframe(
@@ -1015,6 +1024,9 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             c: df_editado[df_editado["CLASIFICACION"] == c]["TOTALES"].sum()
             for c in CLASIFICACIONES_PRINCIPALES
         }
+
+        totales["ACTIVO"] += goodwill + total_p_facturar
+        
         if total_capital_con_utilidad != 0:
             totales["CAPITAL"] = total_capital_con_utilidad
 
@@ -1043,7 +1055,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             for clasif in CLASIFICACIONES_PRINCIPALES:
 
                 df_export = df_editado[df_editado["CLASIFICACION"] == clasif][
-                    ["Cuenta", "TOTALES"]
+                    ["Descripción", "TOTALES"]
                 ].copy()
 
                 total = df_export["TOTALES"].sum()
@@ -1051,7 +1063,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 df_export = pd.concat([
                     df_export,
                     pd.DataFrame({
-                        "Cuenta": [f"TOTAL {clasif}"],
+                        "Descripción": [f"TOTAL {clasif}"],
                         "TOTALES": [total]
                     })
                 ])
@@ -1078,7 +1090,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         )
 
         return df_editado
-
 
     total_activo, total_social, goodwill = tabla_inversiones(balance_url)
     df_resultado, df_final = tabla_ingresos_egresos(balance_url, info_manual)
@@ -1275,6 +1286,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
