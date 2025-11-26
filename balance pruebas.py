@@ -1073,16 +1073,19 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
 elif selected == "BALANCE FINAL":
 
-    def tabla_BALANCE_FINAL(df_editado):
-        st.subheader("BALANCE FINAL")
+    def tabla_BALANCE_FINAL(df_editado, goodwill, total_p_facturar, UTILIDAD_EJE_TOTAL):
+        st.subheader("📊 BALANCE FINAL (DESPUÉS DE DEBE / HABER)")
 
         if df_editado is None or df_editado.empty:
             st.warning("No hay información para mostrar el Balance Final")
             return
+
+        # ⬇️ Usamos ahora CATEGORIA en vez de Descripción
         columnas = ["CLASIFICACION", "CATEGORIA", "TOTALES"]
         df_balance = df_editado[columnas].copy()
 
         totales_dict = {}
+
         for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
 
             df_clasif = df_balance[df_balance["CLASIFICACION"] == clasif].copy()
@@ -1091,6 +1094,8 @@ elif selected == "BALANCE FINAL":
                 continue
 
             total_valor = df_clasif["TOTALES"].sum()
+
+            # ✅ Agregar fila TOTAL por clasificación
             total_fila = pd.DataFrame({
                 "CLASIFICACION": [clasif],
                 "CATEGORIA": [f"TOTAL {clasif}"],
@@ -1099,7 +1104,15 @@ elif selected == "BALANCE FINAL":
 
             df_clasif = pd.concat([df_clasif, total_fila], ignore_index=True)
 
-            totales_dict[clasif] = total_valor
+            # ✅ Ajuste para que empate al BALANCE ACUMULADO
+            if clasif == "ACTIVO":
+                totales_dict[clasif] = total_valor + goodwill + total_p_facturar
+
+            elif clasif == "CAPITAL":
+                totales_dict[clasif] = total_valor + UTILIDAD_EJE_TOTAL
+
+            else:
+                totales_dict[clasif] = total_valor
 
             with st.expander(f"📘 {clasif}", expanded=True if clasif == "ACTIVO" else False):
 
@@ -1109,9 +1122,12 @@ elif selected == "BALANCE FINAL":
                     use_container_width=True,
                     hide_index=True
                 )
+
         total_activo = totales_dict.get("ACTIVO", 0)
         total_pasivo = totales_dict.get("PASIVO", 0)
         total_capital = totales_dict.get("CAPITAL", 0)
+
+        # ✅ Fórmula correcta de cuadratura
         diferencia = total_activo + total_pasivo + total_capital
 
         resumen_final = pd.DataFrame({
@@ -1136,6 +1152,28 @@ elif selected == "BALANCE FINAL":
             use_container_width=True,
             hide_index=True
         )
+
+        # 🔍 Ver cuentas incluidas en cada total
+        with st.expander("🔍 Ver cuentas que forman cada total"):
+            for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
+                st.markdown(f"### {clasif}")
+                df_detalle = df_balance[df_balance["CLASIFICACION"] == clasif][
+                    ["CATEGORIA", "TOTALES"]
+                ].copy()
+
+                if not df_detalle.empty:
+                    st.dataframe(
+                        df_detalle.style.format({"TOTALES": "${:,.2f}"}),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+        if abs(diferencia) < 1:
+            st.success("✅ El balance general está correctamente cuadrado")
+        else:
+            st.error(f"❌ El balance NO cuadra. Diferencia: ${diferencia:,.2f}")
+
+        # 💾 EXPORTAR A EXCEL
         output = BytesIO()
 
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -1151,6 +1189,12 @@ elif selected == "BALANCE FINAL":
 
                 total = df_export["TOTALES"].sum()
 
+                if clasif == "ACTIVO":
+                    total = total + goodwill + total_p_facturar
+
+                if clasif == "CAPITAL":
+                    total = total + UTILIDAD_EJE_TOTAL
+
                 df_export = pd.concat([
                     df_export,
                     pd.DataFrame({
@@ -1161,6 +1205,7 @@ elif selected == "BALANCE FINAL":
 
                 df_export.to_excel(writer, index=False, sheet_name=clasif)
 
+            # Hoja resumen
             resumen_export = pd.DataFrame({
                 "Concepto": [
                     "TOTAL ACTIVO",
@@ -1179,6 +1224,7 @@ elif selected == "BALANCE FINAL":
             resumen_export.to_excel(writer, index=False, sheet_name="Resumen Final")
 
             workbook = writer.book
+
             for sheet_name in writer.sheets.keys():
 
                 worksheet = writer.sheets[sheet_name]
@@ -1206,8 +1252,8 @@ elif selected == "BALANCE FINAL":
 
 
 
-
    
+
 
 
 
