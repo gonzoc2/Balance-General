@@ -1246,13 +1246,17 @@ elif selected == "BALANCE FINAL":
         )
 
     if "df_balance_manual" in st.session_state:
-        tabla_BALANCE_FINAL(st.session_state["df_balance_manual"])
+        goodwill = st.session_state.get("goodwill", 0)
+        total_p_facturar = st.session_state.get("total_p_facturar", 0)
+        util_eje = st.session_state.get("UTILIDAD_EJE_TOTAL", 0)
+        tabla_BALANCE_FINAL(st.session_state["df_balance_manual"], goodwill, total_p_facturar, st.session_state["UTILIDAD_EJE_TOTAL"])
     else:
         st.warning("⚠️ Ejecuta primero el Balance Acumulado")
 
 
 
    
+
 
 
 
