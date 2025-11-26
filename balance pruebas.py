@@ -712,7 +712,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             hide_index=True
         )
 
-        return provision_gastos, iva_p_acreditar
+        return provision_gastos, iva_p_acreditar, total_g_por_facturar
 
     def tabla_ingresos_egresos2(total_p_facturados, df_resultado, provision_gastos):
 
@@ -746,7 +746,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         df_out.loc[df_out["CLASIFICACIÓN"] == "UTILIDAD DEL EJE", "TOTALES"] = utilidad_total_real
 
         st.session_state["df_ingresos_egresos2"] = df_out.copy()
-        st.session_state["UTILIDAD_EJE_TOTAL"] = utilidad_total_real
+        st.session_state["UTILIDAD_EJE_TOTAL"] = utilidad_total_real + df_out["DEBE"].sum() - df_out["HABER"].sum()
 
         st.dataframe(
             df_out.style.format({
@@ -761,16 +761,13 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
         return df_out
 
-    def tabla_balance_acumulado(total_social, total_activo, goodwill, balance_url, mapeo_url, UTILIDAD_EJE_TOTAL, total_p_facturar, iva_p_acreditar, iva_p_pagar):
+    def tabla_balance_acumulado(total_social, goodwill, balance_url, mapeo_url, UTILIDAD_EJE_TOTAL, total_p_facturar, iva_p_acreditar, iva_p_pagar, info_manual, total_g_por_facturar):
 
         st.subheader("Balance General Acumulado")
-
         df_mapeo = cargar_mapeo(mapeo_url)
-        df_mapeo.columns = df_mapeo.columns.str.strip()
-        col_mapeo = next((c for c in df_mapeo.columns if "cuenta" in c.lower()), None)
+        col_mapeo = next((c for c in df_mapeo.columns if "CUENTA" in c.upper()), None)
         if not col_mapeo:
-            st.error("❌ No se encontró columna 'Cuenta' en el mapeo.")
-            st.write("Columnas del archivo de mapeo:", df_mapeo.columns.tolist())
+            st.error("❌ La hoja de mapeo debe contener una columna llamada 'Cuenta'.")
             return None
         df_mapeo.rename(columns={col_mapeo: "Cuenta"}, inplace=True)
         df_mapeo["Cuenta"] = df_mapeo["Cuenta"].astype(str).str.strip()
@@ -781,9 +778,9 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         ]
         df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
 
+        df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
         data_empresas = cargar_balance(balance_url, EMPRESAS)
         data_resumen = []
-
         data_manual = cargar_manual(info_manual, ["CXP"])
         df_cxp = data_manual.get("CXP")
         debe_proveedores = 0.0
@@ -798,6 +795,9 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     debe_proveedores = 0.0
         else:
             st.warning("⚠️ No se encontró la hoja 'CXP' en info_manual.")
+
+        data_empresas = cargar_balance(balance_url, EMPRESAS)
+        data_resumen = []
 
         for hoja in EMPRESAS:
 
@@ -868,7 +868,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         df_total["MANUAL"] = 0.0
 
         df_total.loc[
-            df_total["CATEGORIA"].str.contains("IVA ACREDITABLE|DEUDORES RELACIONADOS|OTROS ACTIVOS", case=False),
+            df_total["CATEGORIA"].str.contains("IVA ACREDITABLE|DEUDORES RELACIONADOS|OTROS ACTIVOS|IMPUESTOS DIFERIDOS", case=False),
             "HABER"
         ] = df_total["ACUMULADO"]
 
@@ -905,7 +905,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "HABER"
         ] = iva_p_pagar
 
-        total_capital_social = total_social + total_activo
+        total_capital_social = total_social
         df_total.loc[
             df_total["CATEGORIA"].str.contains("CAPITAL SOCIAL", case=False),
             "DEBE"
@@ -915,6 +915,12 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
         if "df_balance_manual" not in st.session_state:
             st.session_state["df_balance_manual"] = df_total.copy()
+
+        df_total.loc[
+            (df_total["CLASIFICACION"] == "ACTIVO") &
+            (df_total["CATEGORIA"].str.contains("CUENTAS POR COBRAR", case=False)),
+            "HABER"
+        ] += debe_proveedores
 
         df_total.loc[
             (df_total["CLASIFICACION"] == "PASIVO") &
@@ -977,6 +983,20 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
                 df_clasif = pd.concat([df_clasif, fila_goodwill, fila_no_fact], ignore_index=True)
 
+            if clasif == "PASIVO":
+
+                fila_goodwill = pd.DataFrame({
+                    "CLASIFICACION": ["PASIVO"],
+                    "Descripción": ["FLETES NO FACTURADOS"],
+                    "ACUMULADO": [0.0],
+                    "DEBE": [total_g_por_facturar],
+                    "HABER": [0.0],
+                    "MANUAL": [0.0],
+                    "TOTALES": [total_g_por_facturar]
+                })
+
+                df_clasif = pd.concat([df_clasif, fila_utilidad], ignore_index=True)
+
             if clasif == "CAPITAL":
 
                 fila_utilidad = pd.DataFrame({
@@ -1018,15 +1038,13 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     use_container_width=True,
                     hide_index=True
                 )
-
-        # ✅ CORRECCIÓN 2 - USAR TOTALES
         totales = {
             c: df_editado[df_editado["CLASIFICACION"] == c]["TOTALES"].sum()
             for c in CLASIFICACIONES_PRINCIPALES
         }
 
         totales["ACTIVO"] += goodwill + total_p_facturar
-        
+
         if total_capital_con_utilidad != 0:
             totales["CAPITAL"] = total_capital_con_utilidad
 
@@ -1044,85 +1062,14 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
         st.markdown("### Resumen Consolidado")
         st.dataframe(resumen_final, use_container_width=True, hide_index=True)
-
-        if abs(diferencia) < 1:
-            st.success("✅ El balance está cuadrado")
-        else:
-            st.error("❌ El balance NO cuadra. Revisar movimientos.")
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-
-            for clasif in CLASIFICACIONES_PRINCIPALES:
-
-                df_export = df_editado[df_editado["CLASIFICACION"] == clasif][
-                    ["Cuenta", "TOTALES"]
-                ].copy()
-
-                total = df_export["TOTALES"].sum()
-
-                df_export = pd.concat([
-                    df_export,
-                    pd.DataFrame({
-                        "Cuenta": [f"TOTAL {clasif}"],
-                        "TOTALES": [total]
-                    })
-                ])
-
-                df_export.to_excel(writer, index=False, sheet_name=clasif)
-
-            resumen_num = pd.DataFrame({
-                "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA"],
-                "Monto": [
-                    totales["ACTIVO"],
-                    totales["PASIVO"],
-                    totales["CAPITAL"],
-                    diferencia
-                ]
-            })
-
-            resumen_num.to_excel(writer, index=False, sheet_name="Resumen Final")
-
-        st.download_button(
-            "💾 Descargar Balance Acumulado (Totales Reales)",
-            data=output.getvalue(),
-            file_name="Balance_Acumulado_ESGARI_correcto.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
         return df_editado
 
     total_activo, total_social, goodwill = tabla_inversiones(balance_url)
     df_resultado, df_final = tabla_ingresos_egresos(balance_url, info_manual)
     total_p_facturados, iva_p_pagar, total_p_facturar = tabla_ingresos_gastos2(df_resultado, info_manual)
-    provision_gastos, iva_p_acreditar = tabla_gastos2(df_resultado, info_manual)
+    provision_gastos, iva_p_acreditar, total_g_por_facturar = tabla_gastos2(df_resultado, info_manual)
     df_ing_egr2 = tabla_ingresos_egresos2(total_p_facturados, df_resultado, provision_gastos)
-    tabla_balance_acumulado(total_social, total_activo, goodwill, balance_url, mapeo_url, st.session_state["UTILIDAD_EJE_TOTAL"], total_p_facturar, iva_p_acreditar, iva_p_pagar)
-
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        if "df_inv" in st.session_state:
-            st.session_state["df_inv"].to_excel(
-                writer, index=False, sheet_name="Inversiones"
-            )
-        if "df_ingresos_egresos" in st.session_state:
-            st.session_state["df_ingresos_egresos"].to_excel(
-                writer, index=False, sheet_name="Ingresos Consolidados"
-            )
-        if "df_ingresos_facturar" in st.session_state:
-            st.session_state["df_ingresos_facturar"].to_excel(
-                writer, index=False, sheet_name="Ingresos Reales/Facturados"
-            )
-        if "df_gastos_consolidados" in st.session_state:
-            st.session_state["df_gastos_consolidados"].to_excel(
-                writer, index=False, sheet_name="Gastos Consolidados"
-            )
-    st.download_button(
-        label="💾 Descargar Excel ESGARI Consolidado",
-        data=output.getvalue(),
-        file_name="ESGARI_Consolidado.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
+    tabla_balance_acumulado(total_social, goodwill, balance_url, mapeo_url, st.session_state["UTILIDAD_EJE_TOTAL"], total_p_facturar, iva_p_acreditar, iva_p_pagar,info_manual, total_g_por_facturar)
 
 elif selected == "BALANCE FINAL":
 
@@ -1286,6 +1233,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
