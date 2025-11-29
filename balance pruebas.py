@@ -773,9 +773,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         df_mapeo["Cuenta"] = df_mapeo["Cuenta"].astype(str).str.strip()
         df_mapeo["CLASIFICACION"] = df_mapeo["CLASIFICACION"].astype(str).str.strip()
         df_mapeo["CATEGORIA"] = df_mapeo["CATEGORIA"].astype(str).str.strip()
-        df_mapeo = df_mapeo[
-            df_mapeo["CLASIFICACION"].isin(["ACTIVO", "PASIVO", "CAPITAL"])
-        ]
         df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
 
         df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
@@ -1245,6 +1242,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
