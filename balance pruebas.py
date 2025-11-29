@@ -764,29 +764,61 @@ elif selected == "BALANCE GENERAL ACUMULADO":
     def tabla_balance_acumulado(total_social, goodwill, balance_url, mapeo_url, UTILIDAD_EJE_TOTAL, total_p_facturar, iva_p_acreditar, iva_p_pagar, info_manual, total_g_por_facturar):
 
         st.subheader("Balance General Acumulado")
-        df_mapeo = cargar_mapeo(mapeo_url)
-        col_mapeo = next((c for c in df_mapeo.columns if "CUENTA" in c.upper()), None)
-        if not col_mapeo:
-            st.error("❌ La hoja de mapeo debe contener una columna llamada 'Cuenta'.")
+        df_mapeo_local = cargar_mapeo(mapeo_url)
+        data_empresas = cargar_balance(balance_url, EMPRESAS)
+
+        resultados = []
+        balances_detallados = {}
+        cuentas_no_mapeadas = []
+
+        for empresa in EMPRESAS:
+            if empresa not in data_empresas:
+                continue
+
+            df = data_empresas[empresa].copy()
+            col_cuenta = next((c for c in COLUMNAS_CUENTA if c in df.columns), None)
+            col_monto = next((c for c in COLUMNAS_MONTO if c in df.columns), None)
+
+            if not col_cuenta or not col_monto:
+                st.warning(f"⚠️ {empresa}: columnas inválidas ('Cuenta' / 'Saldo').")
+                continue
+
+            df[col_cuenta] = df[col_cuenta].apply(limpiar_cuenta)
+            df[col_monto] = df[col_monto].replace("[\$,]", "", regex=True)
+            df[col_monto] = pd.to_numeric(df[col_monto], errors="coerce").fillna(0)
+            df = df.groupby(col_cuenta, as_index=False)[col_monto].sum()
+
+            df_merged = df.merge(
+                df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
+                left_on=col_cuenta,
+                right_on="Cuenta",
+                how="left"
+            )
+
+            no_mapeadas = df_merged[df_merged["CLASIFICACION"].isna()].copy()
+            if not no_mapeadas.empty:
+                no_mapeadas["EMPRESA"] = empresa
+                cuentas_no_mapeadas.append(no_mapeadas[["Cuenta", col_monto, "EMPRESA"]])
+
+            df_merged = df_merged[~df_merged["CLASIFICACION"].isna()]
+            if df_merged.empty:
+                st.warning(f"⚠️ {empresa}: sin coincidencias exactas con el mapeo.")
+                continue
+
+            resumen = (
+                df_merged.groupby(["CLASIFICACION", "CATEGORIA"])[col_monto]
+                .sum()
+                .reset_index()
+                .rename(columns={col_monto: empresa})
+            )
+
+            resultados.append(resumen)
+            balances_detallados[empresa] = df_merged.copy()
+
+        if not resultados:
+            st.error("❌ No se generó información para consolidación.")
             return None
 
-        df_mapeo.rename(columns={col_mapeo: "Cuenta"}, inplace=True)
-        df_mapeo["Cuenta"] = df_mapeo["Cuenta"].astype(str).str.strip()
-        df_mapeo["CLASIFICACION"] = df_mapeo["CLASIFICACION"].astype(str).str.strip()
-        df_mapeo["CATEGORIA"] = df_mapeo["CATEGORIA"].astype(str).str.strip()
-        df_mapeo = df_mapeo[df_mapeo["CLASIFICACION"].isin(["ACTIVO", "PASIVO", "CAPITAL"])]
-        dupes = df_mapeo[df_mapeo.duplicated(subset=["Cuenta"], keep=False)]
-        if not dupes.empty:
-            st.warning("⚠️ Existen cuentas duplicadas en el mapeo. Esto causa que algunas empresas no se consoliden correctamente.")
-            st.dataframe(dupes)
-        df_mapeo = (
-            df_mapeo
-            .sort_values("Cuenta")
-            .groupby("Cuenta", as_index=False)
-            .first()
-        )
-
-        data_empresas = cargar_balance(balance_url, EMPRESAS)
         data_manual = cargar_manual(info_manual, ["CXP"])
         df_cxp = data_manual.get("CXP")
 
@@ -803,54 +835,9 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         else:
             st.warning("⚠️ No se encontró la hoja 'CXP' en info_manual.")
 
-        data_resumen = []
-        for hoja in EMPRESAS:
-            if hoja not in data_empresas:
-                continue
-            df = data_empresas[hoja].copy()
-            col_cuenta = next((c for c in df.columns if "cuenta" in c.lower()), None)
-            if not col_cuenta:
-                st.warning(f"⚠️ {hoja}: No se encontró columna Cuenta.")
-                continue
-            col_monto = next((c for c in df.columns if "saldo" in c.lower()), None)
-            if not col_monto:
-                st.warning(f"⚠️ {hoja}: No se encontró columna de montos.")
-                continue
-
-            df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
-            df[col_monto] = (
-                df[col_monto]
-                .replace("[\$,]", "", regex=True)
-                .pipe(pd.to_numeric, errors="coerce")
-                .fillna(0)
-            )
-            df = df.groupby(col_cuenta, as_index=False)[col_monto].sum()
-            df_merged = df.merge(
-                df_mapeo[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
-                left_on=col_cuenta,
-                right_on="Cuenta",
-                how="left"
-            )
-            df_filtrado = df_merged[df_merged["CLASIFICACION"].isin(CLASIFICACIONES_PRINCIPALES)]
-            if df_filtrado.empty:
-                continue
-            resumen = (
-                df_filtrado
-                .groupby(["CLASIFICACION", "CATEGORIA"])[col_monto]
-                .sum()
-                .reset_index()
-                .rename(columns={col_monto: hoja})
-            )
-
-            data_resumen.append(resumen)
-
-        if not data_resumen:
-            st.error("❌ No se generó información para consolidación.")
-            return None
-
         df_total = reduce(
             lambda l, r: pd.merge(l, r, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
-            data_resumen
+            resultados
         ).fillna(0)
 
         cols_empresas = [
@@ -1241,6 +1228,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
