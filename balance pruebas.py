@@ -769,17 +769,27 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         if not col_mapeo:
             st.error("❌ La hoja de mapeo debe contener una columna llamada 'Cuenta'.")
             return None
+
         df_mapeo.rename(columns={col_mapeo: "Cuenta"}, inplace=True)
         df_mapeo["Cuenta"] = df_mapeo["Cuenta"].astype(str).str.strip()
         df_mapeo["CLASIFICACION"] = df_mapeo["CLASIFICACION"].astype(str).str.strip()
         df_mapeo["CATEGORIA"] = df_mapeo["CATEGORIA"].astype(str).str.strip()
-        df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
+        df_mapeo = df_mapeo[df_mapeo["CLASIFICACION"].isin(["ACTIVO", "PASIVO", "CAPITAL"])]
+        dupes = df_mapeo[df_mapeo.duplicated(subset=["Cuenta"], keep=False)]
+        if not dupes.empty:
+            st.warning("⚠️ Existen cuentas duplicadas en el mapeo. Esto causa que algunas empresas no se consoliden correctamente.")
+            st.dataframe(dupes)
+        df_mapeo = (
+            df_mapeo
+            .sort_values("Cuenta")
+            .groupby("Cuenta", as_index=False)
+            .first()
+        )
 
-        df_mapeo = df_mapeo.drop_duplicates(subset=["Cuenta"], keep="first")
         data_empresas = cargar_balance(balance_url, EMPRESAS)
-        data_resumen = []
         data_manual = cargar_manual(info_manual, ["CXP"])
         df_cxp = data_manual.get("CXP")
+
         debe_proveedores = 0.0
 
         if df_cxp is not None:
@@ -793,20 +803,15 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         else:
             st.warning("⚠️ No se encontró la hoja 'CXP' en info_manual.")
 
-        data_empresas = cargar_balance(balance_url, EMPRESAS)
         data_resumen = []
-
         for hoja in EMPRESAS:
-
             if hoja not in data_empresas:
                 continue
-
             df = data_empresas[hoja].copy()
             col_cuenta = next((c for c in df.columns if "cuenta" in c.lower()), None)
             if not col_cuenta:
                 st.warning(f"⚠️ {hoja}: No se encontró columna Cuenta.")
                 continue
-
             col_monto = next((c for c in df.columns if "saldo" in c.lower()), None)
             if not col_monto:
                 st.warning(f"⚠️ {hoja}: No se encontró columna de montos.")
@@ -819,22 +824,16 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 .pipe(pd.to_numeric, errors="coerce")
                 .fillna(0)
             )
-
-            # ✅ CORRECCIÓN 1 - AGRUPACIÓN POR CUENTA
             df = df.groupby(col_cuenta, as_index=False)[col_monto].sum()
-
             df_merged = df.merge(
                 df_mapeo[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
                 left_on=col_cuenta,
                 right_on="Cuenta",
                 how="left"
             )
-
             df_filtrado = df_merged[df_merged["CLASIFICACION"].isin(CLASIFICACIONES_PRINCIPALES)]
-
             if df_filtrado.empty:
                 continue
-
             resumen = (
                 df_filtrado
                 .groupby(["CLASIFICACION", "CATEGORIA"])[col_monto]
@@ -1242,6 +1241,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
