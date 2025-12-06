@@ -1069,6 +1069,12 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
         st.markdown("### Resumen Consolidado")
         st.dataframe(resumen_final, use_container_width=True, hide_index=True)
+        
+        st.session_state["goodwill"] = goodwill
+        st.session_state["total_p_facturar"] = total_p_facturar
+        st.session_state["total_g_por_facturar"] = total_g_por_facturar
+        st.session_state["UTILIDAD_EJE_TOTAL"] = UTILIDAD_EJE_TOTAL
+        
         return df_editado
 
     total_activo, total_social, goodwill = tabla_inversiones(balance_url)
@@ -1219,6 +1225,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
