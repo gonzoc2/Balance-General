@@ -1080,7 +1080,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
 elif selected == "BALANCE FINAL":
     def tabla_BALANCE_FINAL(df_editado, goodwill, total_p_facturar, UTILIDAD_EJE_TOTAL, total_g_por_facturar):
-        st.subheader("📘 BALANCE FINAL (Con valores adicionales integrados)")
+        st.subheader("📘 BALANCE FINAL (Después de Ajustes Debe/Haber)")
 
         if df_editado is None or df_editado.empty:
             st.warning("⚠️ No hay información para mostrar el Balance Final")
@@ -1091,59 +1091,78 @@ elif selected == "BALANCE FINAL":
 
         totales_dict = {}
 
-        for clasif in ["ACTIVO","PASIVO","CAPITAL"]:
+        for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
             df_clasif = df_balance[df_balance["CLASIFICACION"] == clasif].copy()
-            total_valor = df_clasif["TOTALES"].sum()
 
+            if df_clasif.empty:
+                continue
+
+            # --- total base de la clasificación ---
+            base_total = df_clasif["TOTALES"].sum()
+
+            # --- extras por clasificación (NO cambian la forma de la tabla, solo los totales) ---
+            extra = 0.0
             if clasif == "ACTIVO":
-                df_clasif.loc[len(df_clasif)] = ["GOODWILL", goodwill]
-                df_clasif.loc[len(df_clasif)] = ["CxC NO FACTURADAS", total_p_facturar]
-                total_valor += goodwill + total_p_facturar
-
+                extra = float(goodwill or 0) + float(total_p_facturar or 0)
             elif clasif == "PASIVO":
-                df_clasif.loc[len(df_clasif)] = ["FLETES NO FACTURADOS", total_g_por_facturar]
-                total_valor += total_g_por_facturar
-
+                extra = float(total_g_por_facturar or 0)
             elif clasif == "CAPITAL":
-                df_clasif.loc[len(df_clasif)] = ["UTILIDAD DEL EJE", UTILIDAD_EJE_TOTAL]
-                total_valor += UTILIDAD_EJE_TOTAL
+                extra = float(UTILIDAD_EJE_TOTAL or 0)
 
-            # Guardamos total por clasificador
+            total_valor = base_total + extra
             totales_dict[clasif] = total_valor
 
-            # Agregamos fila final TOTAL
-            df_clasif.loc[len(df_clasif)] = [f"TOTAL {clasif}", total_valor]
+            # --- tabla que se muestra (igual que antes) ---
+            df_show = df_clasif[["CATEGORIA", "TOTALES"]].copy()
 
-            # Visualización desplegable
+            if clasif == "ACTIVO":
+                df_show.loc[len(df_show)] = ["GOODWILL", goodwill]
+                df_show.loc[len(df_show)] = ["CxC NO FACTURADAS", total_p_facturar]
+
+            if clasif == "PASIVO":
+                df_show.loc[len(df_show)] = ["FLETES NO FACTURADOS", total_g_por_facturar]
+
+            if clasif == "CAPITAL":
+                df_show.loc[len(df_show)] = ["UTILIDAD DEL EJE", UTILIDAD_EJE_TOTAL]
+
+            total_row = pd.DataFrame({
+                "CATEGORIA": [f"TOTAL {clasif}"],
+                "TOTALES": [totales_dict[clasif]]
+            })
+
+            df_show = pd.concat([df_show, total_row], ignore_index=True)
+
             with st.expander(f"{clasif}", expanded=True if clasif == "ACTIVO" else False):
                 st.dataframe(
-                    df_clasif[["CATEGORIA","TOTALES"]]
-                    .style.format({"TOTALES":"${:,.2f}"}),
+                    df_show.style.format({"TOTALES": "${:,.2f}"}),
                     use_container_width=True,
                     hide_index=True
                 )
 
-        total_activo = totales_dict.get("ACTIVO",0)
-        total_pasivo = totales_dict.get("PASIVO",0)
-        total_capital = totales_dict.get("CAPITAL",0)
-
+        # --- resumen general ---
+        total_activo = totales_dict.get("ACTIVO", 0)
+        total_pasivo = totales_dict.get("PASIVO", 0)
+        total_capital = totales_dict.get("CAPITAL", 0)
         diferencia = total_activo - (total_pasivo + total_capital)
 
         resumen_final = pd.DataFrame({
-            "Concepto":["TOTAL ACTIVO","TOTAL PASIVO","TOTAL CAPITAL","DIFERENCIA"],
-            "MONTO":[total_activo,total_pasivo,total_capital,diferencia]
+            "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA"],
+            "MONTO": [total_activo, total_pasivo, total_capital, diferencia]
         })
 
         st.markdown("### 📊 Resumen Final")
-        st.dataframe(resumen_final.style.format({"MONTO":"${:,.2f}"}),
-                    use_container_width=True,
-                    hide_index=True)
+        st.dataframe(
+            resumen_final.style.format({"MONTO": "${:,.2f}"}),
+            use_container_width=True,
+            hide_index=True
+        )
 
+        # --- Exportar a Excel (misma lógica, usando totales_dict ya ajustados) ---
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
 
-            for clasif in ["ACTIVO","PASIVO","CAPITAL"]:
-                df_export = df_balance[df_balance["CLASIFICACION"]==clasif][["CATEGORIA","TOTALES"]].copy()
+            for clasif in ["ACTIVO", "PASIVO", "CAPITAL"]:
+                df_export = df_balance[df_balance["CLASIFICACION"] == clasif][["CATEGORIA", "TOTALES"]].copy()
 
                 if clasif == "ACTIVO":
                     df_export.loc[len(df_export)] = ["GOODWILL", goodwill]
@@ -1159,22 +1178,22 @@ elif selected == "BALANCE FINAL":
                 df_export.to_excel(writer, index=False, sheet_name=clasif)
 
             resumen_export = pd.DataFrame({
-                "Concepto":["TOTAL ACTIVO","TOTAL PASIVO","TOTAL CAPITAL","DIFERENCIA"],
-                "Monto":[total_activo,total_pasivo,total_capital,diferencia]
+                "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA"],
+                "Monto": [total_activo, total_pasivo, total_capital, diferencia]
             })
+
             resumen_export.to_excel(writer, index=False, sheet_name="Resumen Final")
 
             workbook = writer.book
             for sheet_name in writer.sheets.keys():
                 worksheet = writer.sheets[sheet_name]
-                money_format = workbook.add_format({'num_format':'$#,##0.00','align':'right'})
-                header_format = workbook.add_format({'bold':True,'bg_color':'#D9E1F2','border':1})
-
-                worksheet.set_row(0,None,header_format)
-                worksheet.set_column("A:A",40)
-                worksheet.set_column("B:B",25,money_format)
-                worksheet.freeze_panes(1,0)
-                worksheet.fit_to_pages(1,0)
+                money_format = workbook.add_format({'num_format': '$#,##0.00', 'align': 'right'})
+                header_format = workbook.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
+                worksheet.set_row(0, None, header_format)
+                worksheet.set_column("A:A", 40)
+                worksheet.set_column("B:B", 25, money_format)
+                worksheet.freeze_panes(1, 0)
+                worksheet.fit_to_pages(1, 0)
 
         st.download_button(
             label="💾 Descargar Balance Final",
@@ -1184,9 +1203,27 @@ elif selected == "BALANCE FINAL":
         )
 
 
+    # Llamada (igual que antes)
+    if "df_balance_manual" in st.session_state:
+        goodwill = st.session_state.get("goodwill", 0)
+        total_p_facturar = st.session_state.get("total_p_facturar", 0)
+        util_eje = st.session_state.get("UTILIDAD_EJE_TOTAL", 0)
+        total_g_por_facturar = st.session_state.get("total_g_por_facturar", 0)
+
+        tabla_BALANCE_FINAL(
+            st.session_state["df_balance_manual"],
+            goodwill,
+            total_p_facturar,
+            util_eje,
+            total_g_por_facturar
+        )
+    else:
+        st.warning("⚠️ Ejecuta primero el Balance Acumulado")
+
 
 
    
+
 
 
 
