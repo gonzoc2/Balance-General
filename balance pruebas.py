@@ -905,10 +905,15 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "HABER"
         ] = total_activo
 
+        acumulado_isr = df_total.loc[
+            df_total["CATEGORIA"].str.contains("ISR", case=False),
+            "ACUMULADO"
+        ].sum()
+        
         df_total.loc[
             df_total["CATEGORIA"].str.contains("Anticipos de ISR", case=False),
             "DEBE"
-        ] = df_total["ISR"] - reconocimiento_impuestos
+        ] = acumulado_isr - reconocimiento_impuestos
 
 
         df_total["TOTALES"] = df_total["ACUMULADO"] + df_total["DEBE"] - df_total["HABER"]
@@ -1186,6 +1191,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
