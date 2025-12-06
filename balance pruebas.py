@@ -1078,7 +1078,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
     df_ing_egr2 = tabla_ingresos_egresos2(total_p_facturados, df_resultado, provision_gastos)
     tabla_balance_acumulado(total_activo, total_social, goodwill, balance_url, mapeo_url, st.session_state["UTILIDAD_EJE_TOTAL"], total_p_facturar, iva_p_acreditar, iva_p_pagar,info_manual, total_g_por_facturar, reconocimiento_impuestos)
 
-elif selected == "BALANCE FINAL":
     def tabla_BALANCE_FINAL(df_editado, goodwill, total_p_facturar, UTILIDAD_EJE_TOTAL, total_g_por_facturar):
         st.subheader("📘 BALANCE FINAL (Después de Ajustes Debe/Haber)")
 
@@ -1097,10 +1096,10 @@ elif selected == "BALANCE FINAL":
             if df_clasif.empty:
                 continue
 
-            # --- total base de la clasificación ---
+            # --- Total base por clasificación ---
             base_total = df_clasif["TOTALES"].sum()
 
-            # --- extras por clasificación (NO cambian la forma de la tabla, solo los totales) ---
+            # --- Ajustes adicionales por clasificación ---
             extra = 0.0
             if clasif == "ACTIVO":
                 extra = float(goodwill or 0) + float(total_p_facturar or 0)
@@ -1110,9 +1109,9 @@ elif selected == "BALANCE FINAL":
                 extra = float(UTILIDAD_EJE_TOTAL or 0)
 
             total_valor = base_total + extra
-            totales_dict[clasif] = total_valor
+            totales_dict[clasif] = total_valor  
 
-            # --- tabla que se muestra (igual que antes) ---
+            # --- Lo que se muestra en pantalla (misma lógica que tu código original) ---
             df_show = df_clasif[["CATEGORIA", "TOTALES"]].copy()
 
             if clasif == "ACTIVO":
@@ -1139,7 +1138,7 @@ elif selected == "BALANCE FINAL":
                     hide_index=True
                 )
 
-        # --- resumen general ---
+        # --- Resumen general ---
         total_activo = totales_dict.get("ACTIVO", 0)
         total_pasivo = totales_dict.get("PASIVO", 0)
         total_capital = totales_dict.get("CAPITAL", 0)
@@ -1151,13 +1150,10 @@ elif selected == "BALANCE FINAL":
         })
 
         st.markdown("### 📊 Resumen Final")
-        st.dataframe(
-            resumen_final.style.format({"MONTO": "${:,.2f}"}),
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(resumen_final.style.format({"MONTO": "${:,.2f}"}),
+                    use_container_width=True, hide_index=True)
 
-        # --- Exportar a Excel (misma lógica, usando totales_dict ya ajustados) ---
+        # --- Exportar a Excel (misma lógica que tenías, usando los totales ajustados) ---
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
 
@@ -1183,7 +1179,6 @@ elif selected == "BALANCE FINAL":
             })
 
             resumen_export.to_excel(writer, index=False, sheet_name="Resumen Final")
-
             workbook = writer.book
             for sheet_name in writer.sheets.keys():
                 worksheet = writer.sheets[sheet_name]
@@ -1203,7 +1198,7 @@ elif selected == "BALANCE FINAL":
         )
 
 
-    # Llamada (igual que antes)
+    # Llamada (igual que ya la tenías)
     if "df_balance_manual" in st.session_state:
         goodwill = st.session_state.get("goodwill", 0)
         total_p_facturar = st.session_state.get("total_p_facturar", 0)
@@ -1223,6 +1218,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
