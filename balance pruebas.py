@@ -1078,6 +1078,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
     df_ing_egr2 = tabla_ingresos_egresos2(total_p_facturados, df_resultado, provision_gastos)
     tabla_balance_acumulado(total_activo, total_social, goodwill, balance_url, mapeo_url, st.session_state["UTILIDAD_EJE_TOTAL"], total_p_facturar, iva_p_acreditar, iva_p_pagar,info_manual, total_g_por_facturar, reconocimiento_impuestos)
 
+elif selected == "BALANCE FINAL":
     def tabla_BALANCE_FINAL(df_editado, goodwill, total_p_facturar, UTILIDAD_EJE_TOTAL, total_g_por_facturar):
         st.subheader("📘 BALANCE FINAL (Después de Ajustes Debe/Haber)")
 
@@ -1218,6 +1219,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
 
    
+
 
 
 
