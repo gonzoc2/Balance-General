@@ -999,7 +999,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     "DEBE": [0.0],
                     "HABER": [total_g_por_facturar],
                     "MANUAL": [0.0],
-                    "TOTALES": [total_g_por_facturar]*-1
+                    "TOTALES": [0.0 + 0.0 - total_g_por_facturar]
                 })
 
                 df_clasif = pd.concat([df_clasif, fila_fletes], ignore_index=True)
@@ -1187,6 +1187,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
