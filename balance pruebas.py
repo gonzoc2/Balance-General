@@ -483,15 +483,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 "SOCIAL": "${:,.2f}",
                 "TOTAL CAPITAL SOCIAL": "${:,.2f}"
             })
-            .apply(
-                lambda x: [
-                    "background-color: #fff200" if "TOTAL CAPITAL SOCIAL" in x.name else ""
-                ],
-                axis=1
-            ),
-            use_container_width=True,
-            hide_index=True
-        )
 
         # ===============================
         # GUARDAR EN SESSION STATE
@@ -1218,6 +1209,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
