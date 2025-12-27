@@ -476,6 +476,10 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         # ===============================
         # MOSTRAR COMO EXCEL
         # ===============================
+        def highlight_total(row):
+            if row["DESCRIPCIÓN"] in ["TOTAL", "TOTAL CAPITAL SOCIAL"]:
+                return ["background-color: #fff200"] * len(row)
+            return [""] * len(row)
         st.dataframe(
             df_excel.style
             .format({
@@ -483,6 +487,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 "SOCIAL": "${:,.2f}",
                 "TOTAL CAPITAL SOCIAL": "${:,.2f}"
             })
+            .apply(highlight_total, axis=1),
+            use_container_width=True,
+            hide_index=True
+        )
+
 
         # ===============================
         # GUARDAR EN SESSION STATE
@@ -1209,6 +1218,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
