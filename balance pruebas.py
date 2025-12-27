@@ -361,10 +361,31 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         st.session_state.pop("df_balance_manual", None)
         st.success("✅ Datos manuales recargados correctamente.")
         
-    def tabla_inversiones(balance_url):
+    def tabla_inversiones(balance_url, mapeo_url):
         st.subheader("Inversiones entre Compañías")
 
+        # =============================
+        # CARGA DE ARCHIVOS
+        # =============================
         df_balance = cargar_balance(balance_url, EMPRESAS)
+        df_mapeo = cargar_mapeo(mapeo_url)
+
+        if df_mapeo.empty:
+            st.error("❌ El mapeo está vacío.")
+            return 0, 0, 0
+
+        # Solo cuentas que CONTENGAN "CAPITAL SOCIAL"
+        cuentas_capital_social = (
+            df_mapeo[
+                df_mapeo["Categoria"]
+                .astype(str)
+                .str.upper()
+                .str.contains("CAPITAL SOCIAL", na=False)
+            ]["Cuenta"]
+            .astype(str)
+            .unique()
+            .tolist()
+        )
 
         inversiones_dict = {
             "HDL-WH": {"hoja": "HOLDING", "Cuenta": "139000001"},
@@ -377,71 +398,73 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "EHM-HOLDING": {"hoja": "EHM", "Cuenta": "139000005"},
         }
 
-        data_inversiones = []
+        data = []
 
-        for clave, info in inversiones_dict.items():
+        # =============================
+        # PROCESO PRINCIPAL
+        # =============================
+        for grupo, info in inversiones_dict.items():
             hoja = info["hoja"]
-            cuenta_objetivo = info["Cuenta"]
+            cuenta_inversion = info["Cuenta"]
 
             if hoja not in df_balance:
-                st.warning(f"⚠️ La hoja '{hoja}' no existe en df_balance.")
                 continue
 
             df = df_balance[hoja].copy()
+            df.columns = df.columns.str.strip()
 
             col_cuenta = next(
-                (c for c in df.columns if str(c).strip() in ["Cuenta", "codigo", "Código", "CODIGO", "CÓDIGO"]),
+                (c for c in df.columns if str(c).lower() in ["cuenta", "codigo", "código"]),
+                None
+            )
+            col_saldo = next(
+                (c for c in df.columns if "saldo final" in str(c).lower()),
                 None
             )
 
-            if not col_cuenta:
-                st.error(f"❌ No se encontró columna de CUENTA en la hoja {hoja}.")
-                st.write("Columnas detectadas:", df.columns.tolist())
+            if not col_cuenta or not col_saldo:
                 continue
 
-            col_monto = next((c for c in df.columns if "saldo final" in str(c).lower()), None)
-            if not col_monto:
-                st.warning(f"⚠️ No se encontró columna de saldo final en '{hoja}'.")
-                continue
-
-            df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
-            df[col_monto] = (
-                df[col_monto]
+            df[col_cuenta] = df[col_cuenta].apply(limpiar_cuenta)
+            df[col_saldo] = (
+                df[col_saldo]
                 .replace("[\$,]", "", regex=True)
                 .pipe(pd.to_numeric, errors="coerce")
                 .fillna(0)
             )
 
-            mask = df[col_cuenta] == cuenta_objetivo
-            monto = df.loc[mask, col_monto].sum()
+            # -----------------------------
+            # ACTIVO (INVERSION)
+            # -----------------------------
+            activo = df.loc[df[col_cuenta] == cuenta_inversion, col_saldo].sum()
 
-            if monto == 0:
-                st.info(f"ℹ️ No se encontró la cuenta {cuenta_objetivo} en hoja '{hoja}'.")
-                st.write("🔍 Cuentas detectadas:", df[col_cuenta].unique()[:20].tolist())
-                continue
-            social_val = -14_404_988.06 if clave == "HDL-WH" else -monto
+            # -----------------------------
+            # CAPITAL SOCIAL (AMARILLO)
+            # -----------------------------
+            capital_social = df.loc[
+                df[col_cuenta].isin(cuentas_capital_social),
+                col_saldo
+            ].sum() * -1  # siempre negativo
 
-            total_val = monto + social_val
+            total = activo + capital_social
 
-            data_inversiones.append({
-                "GRUPO": clave,
-                "CUENTA": cuenta_objetivo,
-                "ACTIVO": monto,
-                "SOCIAL": social_val,
-                "TOTALES": total_val
+            data.append({
+                "GRUPO": grupo,
+                "CUENTA": cuenta_inversion,
+                "ACTIVO": activo,
+                "SOCIAL": capital_social,
+                "TOTALES": total
             })
 
-        if not data_inversiones:
-            st.warning("⚠️ No se encontraron coincidencias en inversiones.")
-            return 0, 0, 0
+        df_inv = pd.DataFrame(data)
 
-        df_inv = pd.DataFrame(data_inversiones)
-
+        # =============================
+        # TOTALES Y GOODWILL
+        # =============================
         total_activo = df_inv["ACTIVO"].sum()
         total_social = df_inv["SOCIAL"].sum()
 
-        # GOODWILL = -(ACTIVO + SOCIAL) (misma fórmula que ya usabas)
-        goodwill = (total_activo + total_social) * -1
+        goodwill = -(total_activo + total_social)
 
         df_inv = pd.concat([
             df_inv,
@@ -454,6 +477,9 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             }])
         ], ignore_index=True)
 
+        # =============================
+        # MOSTRAR TABLA
+        # =============================
         st.dataframe(
             df_inv.style.format({
                 "ACTIVO": "${:,.2f}",
@@ -464,10 +490,9 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             hide_index=True
         )
 
-        st.session_state["total_inversiones"] = total_activo
-        st.session_state["total_social"] = total_social
-        st.session_state["GOODWILL"] = goodwill
-
+        # =============================
+        # CONSOLIDACIÓN CONTABLE
+        # =============================
         st.subheader("Consolidación Inversiones en Acciones")
 
         df_consol = pd.DataFrame({
@@ -488,14 +513,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             ]
         })
 
-        df_consol = pd.concat([
-            df_consol,
-            pd.DataFrame([{
-                "CONCEPTO": "TOTAL",
-                "DEBE": df_consol["DEBE"].sum(),
-                "HABER": df_consol["HABER"].sum()
-            }])
-        ], ignore_index=True)
+        df_consol.loc["TOTAL"] = [
+            "TOTAL",
+            df_consol["DEBE"].sum(),
+            df_consol["HABER"].sum()
+        ]
 
         st.dataframe(
             df_consol.style.format({
@@ -1225,6 +1247,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
