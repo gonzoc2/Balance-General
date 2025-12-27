@@ -361,36 +361,23 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         st.session_state.pop("df_balance_manual", None)
         st.success("✅ Datos manuales recargados correctamente.")
         
-    def tabla_inversiones(balance_url, mapeo_url):
+    def tabla_inversiones(balance_url):
         st.subheader("Inversiones entre Compañías")
 
-        # =============================
-        # CARGA DE ARCHIVOS
-        # =============================
         df_balance = cargar_balance(balance_url, EMPRESAS)
-        df_mapeo = cargar_mapeo(mapeo_url)
+        df_mapeo_local = cargar_mapeo(mapeo_url)
 
-        if df_mapeo.empty:
-            st.error("❌ El mapeo está vacío.")
-            return 0, 0, 0
-
-        # Solo cuentas que CONTENGAN "CAPITAL SOCIAL"
         cuentas_capital_social = (
-            df_mapeo[
-                df_mapeo["CATEGORIA"]
-                .astype(str)
-                .str.upper()
-                .str.contains("CAPITAL SOCIAL", na=False)
-            ]["Cuenta"]
+            df_mapeo_local
+            .loc[df_mapeo_local["CATEGORIA"] == "CAPITAL SOCIAL", "Cuenta"]
             .astype(str)
             .unique()
-            .tolist()
         )
 
         inversiones_dict = {
             "HDL-WH": {"hoja": "HOLDING", "Cuenta": "139000001"},
-            "EHM-WH": {"hoja": "EHM", "Cuenta": "139000001"},
             "FWD-WH": {"hoja": "FWD", "Cuenta": "125000001"},
+            "EHM-WH": {"hoja": "EHM", "Cuenta": "139000001"},
             "EHM-FWD": {"hoja": "EHM", "Cuenta": "139000003"},
             "EHM-UBIKARGA": {"hoja": "EHM", "Cuenta": "139000004"},
             "EHM-GREEN": {"hoja": "EHM", "Cuenta": "139000006"},
@@ -398,12 +385,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "EHM-HOLDING": {"hoja": "EHM", "Cuenta": "139000005"},
         }
 
-        data = []
+        filas_excel = []
+        total_activo = 0.0
+        total_social = 0.0
 
-        # =============================
-        # PROCESO PRINCIPAL
-        # =============================
-        for grupo, info in inversiones_dict.items():
+        for clave, info in inversiones_dict.items():
             hoja = info["hoja"]
             cuenta_inversion = info["Cuenta"]
 
@@ -411,125 +397,110 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 continue
 
             df = df_balance[hoja].copy()
-            df.columns = df.columns.str.strip()
 
             col_cuenta = next(
-                (c for c in df.columns if str(c).lower() in ["cuenta", "codigo", "código"]),
+                (c for c in df.columns if str(c).strip().lower() in ["cuenta", "codigo", "código"]),
                 None
             )
-            col_saldo = next(
+            col_monto = next(
                 (c for c in df.columns if "saldo final" in str(c).lower()),
                 None
             )
 
-            if not col_cuenta or not col_saldo:
+            if not col_cuenta or not col_monto:
                 continue
 
-            df[col_cuenta] = df[col_cuenta].apply(limpiar_cuenta)
-            df[col_saldo] = (
-                df[col_saldo]
+            df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
+            df[col_monto] = (
+                df[col_monto]
                 .replace("[\$,]", "", regex=True)
                 .pipe(pd.to_numeric, errors="coerce")
                 .fillna(0)
             )
 
-            # -----------------------------
-            # ACTIVO (INVERSION)
-            # -----------------------------
-            activo = df.loc[df[col_cuenta] == cuenta_inversion, col_saldo].sum()
+            # ===============================
+            # ACTIVO (CUENTA DE INVERSIÓN)
+            # ===============================
+            activo = df.loc[df[col_cuenta] == cuenta_inversion, col_monto].sum()
 
-            # -----------------------------
-            # CAPITAL SOCIAL (AMARILLO)
-            # -----------------------------
+            # ===============================
+            # CAPITAL SOCIAL (MAPEO)
+            # ===============================
             capital_social = df.loc[
                 df[col_cuenta].isin(cuentas_capital_social),
-                col_saldo
-            ].sum() * -1  # siempre negativo
+                col_monto
+            ].sum()
 
-            total = activo + capital_social
+            social = -abs(capital_social)
+            total = activo + social
 
-            data.append({
-                "GRUPO": grupo,
-                "CUENTA": cuenta_inversion,
+            total_activo += activo
+            total_social += social
+
+            filas_excel.append({
+                "DESCRIPCIÓN": clave,
                 "ACTIVO": activo,
-                "SOCIAL": capital_social,
-                "TOTALES": total
+                "SOCIAL": social,
+                "TOTAL CAPITAL SOCIAL": total
             })
 
-        df_inv = pd.DataFrame(data)
-
-        # =============================
-        # TOTALES Y GOODWILL
-        # =============================
-        total_activo = df_inv["ACTIVO"].sum()
-        total_social = df_inv["SOCIAL"].sum()
-
+        # ===============================
+        # GOODWILL
+        # ===============================
         goodwill = -(total_activo + total_social)
 
-        df_inv = pd.concat([
-            df_inv,
-            pd.DataFrame([{
-                "GRUPO": "",
-                "CUENTA": "GOODWILL CONSOLIDADO",
-                "ACTIVO": goodwill,
-                "SOCIAL": 0.0,
-                "TOTALES": goodwill
-            }])
-        ], ignore_index=True)
-
-        # =============================
-        # MOSTRAR TABLA
-        # =============================
-        st.dataframe(
-            df_inv.style.format({
-                "ACTIVO": "${:,.2f}",
-                "SOCIAL": "${:,.2f}",
-                "TOTALES": "${:,.2f}",
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
-
-        # =============================
-        # CONSOLIDACIÓN CONTABLE
-        # =============================
-        st.subheader("Consolidación Inversiones en Acciones")
-
-        df_consol = pd.DataFrame({
-            "CONCEPTO": [
-                "INVERSIONES EN ACCIONES",
-                "CAPITAL SOCIAL",
-                "GOODWILL"
-            ],
-            "DEBE": [
-                0.0,
-                -total_social,
-                -goodwill
-            ],
-            "HABER": [
-                total_activo,
-                0.0,
-                0.0
-            ]
+        filas_excel.append({
+            "DESCRIPCIÓN": "GOODWILL (Intangibles)",
+            "ACTIVO": goodwill,
+            "SOCIAL": 0.0,
+            "TOTAL CAPITAL SOCIAL": goodwill
         })
 
-        df_consol.loc["TOTAL"] = [
-            "TOTAL",
-            df_consol["DEBE"].sum(),
-            df_consol["HABER"].sum()
-        ]
+        df_excel = pd.DataFrame(filas_excel)
 
+        # ===============================
+        # TOTALES FINALES
+        # ===============================
+        fila_total = {
+            "DESCRIPCIÓN": "TOTAL",
+            "ACTIVO": df_excel["ACTIVO"].sum(),
+            "SOCIAL": df_excel["SOCIAL"].sum(),
+            "TOTAL CAPITAL SOCIAL": df_excel["TOTAL CAPITAL SOCIAL"].sum()
+        }
+
+        df_excel = pd.concat(
+            [df_excel, pd.DataFrame([fila_total])],
+            ignore_index=True
+        )
+
+        # ===============================
+        # MOSTRAR COMO EXCEL
+        # ===============================
         st.dataframe(
-            df_consol.style.format({
-                "DEBE": "${:,.2f}",
-                "HABER": "${:,.2f}",
-            }),
+            df_excel.style
+            .format({
+                "ACTIVO": "${:,.2f}",
+                "SOCIAL": "${:,.2f}",
+                "TOTAL CAPITAL SOCIAL": "${:,.2f}"
+            })
+            .apply(
+                lambda x: [
+                    "background-color: #fff200" if "TOTAL CAPITAL SOCIAL" in x.name else ""
+                ],
+                axis=1
+            ),
             use_container_width=True,
             hide_index=True
         )
 
-        return total_activo, total_social, goodwill
+        # ===============================
+        # GUARDAR EN SESSION STATE
+        # ===============================
+        st.session_state["total_inversiones"] = total_activo
+        st.session_state["total_social"] = total_social
+        st.session_state["GOODWILL"] = goodwill
 
+        return total_activo, total_social, goodwill
 
     def tabla_ingresos_egresos(balance_url, info_manual):
         st.subheader("Ingresos y Gastos del Ejercicio")
@@ -1247,6 +1218,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
