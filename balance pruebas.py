@@ -377,7 +377,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         # Solo cuentas que CONTENGAN "CAPITAL SOCIAL"
         cuentas_capital_social = (
             df_mapeo[
-                df_mapeo["Categoria"]
+                df_mapeo["CATEGORIA"]
                 .astype(str)
                 .str.upper()
                 .str.contains("CAPITAL SOCIAL", na=False)
@@ -1247,6 +1247,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
