@@ -674,7 +674,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         provision_gastos = gastos_reales - gastos_facturados + impuestos
         total_g_facturados = provision_gastos - reconocimiento_impuestos
         iva_p_acreditar = total_g_facturados* 0.16
-        total_g_por_facturar = gastos_facturados + iva_p_acreditar
+        total_g_por_facturar = total_g_facturados + iva_p_acreditar
 
         df_resumen = pd.DataFrame({
             "CONCEPTO": [
@@ -886,18 +886,26 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             (df_total["CATEGORIA"].str.contains("ACREEDORES RELACIONADOS", case=False)),
             "ACUMULADO"
         ].sum()
-
+        deudores_relacionados = df_total.loc[
+            (df_total["CLASIFICACION"] == "ACTIVO") &
+            (df_total["CATEGORIA"].str.contains("DEUDORES RELACIONADOS", case=False)),
+            "ACUMULADO"
+        ].sum()
         df_total.loc[
             (df_total["CLASIFICACION"] == "PASIVO") &
             (df_total["CATEGORIA"].str.contains("ACREEDORES DIVERSOS", case=False)),
             "HABER"
-        ] = acreedores_relacionados
-
+        ] = acreedores_relacionados + deudores_relacionados
+        df_total.loc[
+            (df_total["CLASIFICACION"] == "PASIVO") &
+            (df_total["CATEGORIA"].str.contains("ACREEDORES DIVERSOS", case=False)),
+            "DEBE"
+        ] = acreedores_relacionados + deudores_relacionados
         df_total.loc[
             (df_total["CLASIFICACION"] == "PASIVO") &
             (df_total["CATEGORIA"].str.contains("ACREEDORES RELACIONADOS", case=False)),
             "DEBE"
-        ] = acreedores_relacionados*-1
+        ] = acreedores_relacionados*-1 + deudores_relacionados
 
         df_total.loc[
             df_total["CATEGORIA"].str.contains("IVA POR TRASLADAR", case=False),
@@ -959,10 +967,10 @@ elif selected == "BALANCE GENERAL ACUMULADO":
 
 
         df_total.loc[
-            (df_total["CLASIFICACION"] == "ACTIVO") &
+            (df_total["CLASIFICACION"] == "PASIVO") &
             (df_total["CATEGORIA"].str.contains("Anticipos de ISR", case=False)),
-            "ACUMULADO"
-        ].sum()
+            "DEBE"
+        ] = df_total["ACUMULADO"]
 
 
         df_total["TOTALES"] = df_total["ACUMULADO"] + df_total["DEBE"] - df_total["HABER"]
@@ -976,6 +984,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "DEBE"
         ] += monto_cxp_cr
 
+        df_total.loc[
+            (df_total["CLASIFICACION"] == "ACTIVO") &
+            (df_total["CATEGORIA"].str.contains("CUENTAS POR COBRAR", case=False)),
+            "HABER"
+        ] += monto_cxp_cr
 
         df_editado = st.data_editor(
             st.session_state["df_balance_manual"],
@@ -1025,7 +1038,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     "Descripción": ["CUENTAS POR COBRAR NO FACTURADAS"],
                     "ACUMULADO": [0.0],
                     "DEBE": [total_p_facturar],
-                    "HABER": [monto_cxp_cr],
+                    "HABER": [0.0],
                     "MANUAL": [0.0],
                     "TOTALES": [total_p_facturar]
                 })
@@ -1267,6 +1280,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
