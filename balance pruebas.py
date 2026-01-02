@@ -361,146 +361,264 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         st.session_state.pop("df_balance_manual", None)
         st.success("✅ Datos manuales recargados correctamente.")
         
-    def tabla_inversiones(balance_url):
-        st.subheader("Inversiones entre Compañías")
+def tabla_inversiones(balance_url, mapeo_url):
+    st.subheader("Inversiones entre Compañías")
 
-        df_balance = cargar_balance(balance_url, EMPRESAS)
-        df_mapeo_local = cargar_mapeo(mapeo_url)
+    # ====== Cargar fuentes ======
+    df_balance = cargar_balance(balance_url, EMPRESAS)   # dict: {hoja: df}
+    df_mapeo = cargar_mapeo(mapeo_url)                  # df
 
-        cuentas_capital_social = (
-            df_mapeo_local
-            .loc[df_mapeo_local["CATEGORIA"] == "CAPITAL SOCIAL", "Cuenta"]
-            .astype(str)
-            .unique()
+    inversiones_dict = {
+        "HDL-WH": {"hoja": "HOLDING", "Cuenta": "139000001"},
+        "EHM-WH": {"hoja": "EHM", "Cuenta": "139000001"},
+        "FWD-WH": {"hoja": "FWD", "Cuenta": "125000001"},
+        "EHM-FWD": {"hoja": "EHM", "Cuenta": "139000003"},
+        "EHM-UBIKARGA": {"hoja": "EHM", "Cuenta": "139000004"},
+        "EHM-GREEN": {"hoja": "EHM", "Cuenta": "139000006"},
+        "EHM-RESA": {"hoja": "EHM", "Cuenta": "139000007"},
+        "EHM-HOLDING": {"hoja": "EHM", "Cuenta": "139000005"},
+    }
+
+    def _to_num_series(s):
+        return (
+            s.astype(str)
+             .replace(r"[\$,]", "", regex=True)
+             .pipe(pd.to_numeric, errors="coerce")
+             .fillna(0.0)
         )
 
-        inversiones_dict = {
-            "HDL-WH": {"hoja": "HOLDING", "Cuenta": "139000001"},
-            "FWD-WH": {"hoja": "FWD", "Cuenta": "125000001"},
-            "EHM-WH": {"hoja": "EHM", "Cuenta": "139000001"},
-            "EHM-FWD": {"hoja": "EHM", "Cuenta": "139000003"},
-            "EHM-UBIKARGA": {"hoja": "EHM", "Cuenta": "139000004"},
-            "EHM-GREEN": {"hoja": "EHM", "Cuenta": "139000006"},
-            "EHM-RESA": {"hoja": "EHM", "Cuenta": "139000007"},
-            "EHM-HOLDING": {"hoja": "EHM", "Cuenta": "139000005"},
-        }
+    def _detect_col(df, candidates):
+        cols = {str(c).strip().lower(): c for c in df.columns}
+        for cand in candidates:
+            if cand.lower() in cols:
+                return cols[cand.lower()]
+        return None
 
-        filas_excel = []
-        total_activo = 0.0
-        total_social = 0.0
+    def money_pos(v): return f"$ {v:,.2f}"
+    def money_neg(v): return f"-$ {abs(v):,.2f}"
 
-        for clave, info in inversiones_dict.items():
-            hoja = info["hoja"]
-            cuenta_inversion = info["Cuenta"]
+    def money_cell(v):
+        if v is None:
+            return "-"
+        if isinstance(v, (int, float)):
+            if abs(v) < 1e-12:
+                return "-"
+            return money_neg(v) if v < 0 else money_pos(v)
+        return str(v)
 
-            if hoja not in df_balance:
-                continue
+    col_map_cuenta = _detect_col(df_mapeo, ["Cuenta", "CUENTA", "codigo", "Código", "CODIGO", "CÓDIGO"])
+    col_map_categoria = _detect_col(df_mapeo, ["CATEGORIA", "Categoría", "categoria"])
+    if not col_map_cuenta or not col_map_categoria:
+        st.error("❌ No pude detectar en el MAPEO las columnas 'Cuenta' y 'CATEGORIA'.")
+        st.write("Columnas detectadas en mapeo:", df_mapeo.columns.tolist())
+        return 0.0, 0.0, 0.0
 
-            df = df_balance[hoja].copy()
+    df_mapeo_local = df_mapeo.copy()
+    df_mapeo_local[col_map_cuenta] = df_mapeo_local[col_map_cuenta].astype(str).str.strip()
+    df_mapeo_local[col_map_categoria] = df_mapeo_local[col_map_categoria].astype(str).str.strip().str.upper()
 
-            col_cuenta = next(
-                (c for c in df.columns if str(c).strip().lower() in ["cuenta", "codigo", "código"]),
-                None
-            )
-            col_monto = next(
-                (c for c in df.columns if "saldo final" in str(c).lower()),
-                None
-            )
+    cuentas_capital_social = (
+        df_mapeo_local.loc[df_mapeo_local[col_map_categoria] == "CAPITAL SOCIAL", col_map_cuenta]
+        .dropna()
+        .astype(str).str.strip()
+        .unique()
+        .tolist()
+    )
 
-            if not col_cuenta or not col_monto:
-                continue
+    if not cuentas_capital_social:
+        st.error("❌ No encontré cuentas con CATEGORIA = 'CAPITAL SOCIAL' en tu mapeo.")
+        return 0.0, 0.0, 0.0
 
-            df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
-            df[col_monto] = (
-                df[col_monto]
-                .replace("[\$,]", "", regex=True)
-                .pipe(pd.to_numeric, errors="coerce")
-                .fillna(0)
-            )
+    # hojas objetivo para capital social (las 5 que mencionas)
+    hojas_capital = ["WH", "FWD", "UBIKARGA", "GREEN", "RESA", "HOLDING"]
 
-            # ===============================
-            # ACTIVO (CUENTA DE INVERSIÓN)
-            # ===============================
-            activo = df.loc[df[col_cuenta] == cuenta_inversion, col_monto].sum()
+    capital_social_emp = {}
+    for hoja in hojas_capital:
+        if hoja not in df_balance:
+            capital_social_emp[hoja] = 0.0
+            continue
 
-            # ===============================
-            # CAPITAL SOCIAL (MAPEO)
-            # ===============================
-            capital_social = df.loc[
-                df[col_cuenta].isin(cuentas_capital_social),
-                col_monto
-            ].sum()
+        dfh = df_balance[hoja].copy()
 
-            social = -abs(capital_social)
-            total = activo + social
+        col_cuenta = _detect_col(dfh, ["Cuenta", "codigo", "Código", "CODIGO", "CÓDIGO"])
+        col_saldo_final = next((c for c in dfh.columns if "saldo final" in str(c).lower()), None)
 
-            total_activo += activo
-            total_social += social
+        if not col_cuenta or not col_saldo_final:
+            capital_social_emp[hoja] = 0.0
+            continue
 
-            filas_excel.append({
-                "DESCRIPCIÓN": clave,
-                "ACTIVO": activo,
-                "SOCIAL": social,
-                "TOTAL CAPITAL SOCIAL": total
-            })
+        dfh[col_cuenta] = dfh[col_cuenta].astype(str).str.strip()
+        dfh[col_saldo_final] = _to_num_series(dfh[col_saldo_final])
 
-        # ===============================
-        # GOODWILL
-        # ===============================
-        goodwill = -(total_activo + total_social)
+        cap = dfh.loc[dfh[col_cuenta].isin(cuentas_capital_social), col_saldo_final].sum()
 
-        filas_excel.append({
-            "DESCRIPCIÓN": "GOODWILL (Intangibles)",
-            "ACTIVO": goodwill,
-            "SOCIAL": 0.0,
-            "TOTAL CAPITAL SOCIAL": goodwill
-        })
+        # Queremos que SOCIAL se vea como negativo (como tu Excel).
+        # Si el balance ya viene negativo, mantenemos magnitud.
+        capital_social_emp[hoja] = float(abs(cap))
 
-        df_excel = pd.DataFrame(filas_excel)
+    # ====== 2) Activos por inversión (desde inversiones_dict) ======
+    montos_activo = {}
+    for clave, info in inversiones_dict.items():
+        hoja = info["hoja"]
+        cuenta_objetivo = info["Cuenta"]
 
-        # ===============================
-        # TOTALES FINALES
-        # ===============================
-        fila_total = {
-            "DESCRIPCIÓN": "TOTAL",
-            "ACTIVO": df_excel["ACTIVO"].sum(),
-            "SOCIAL": df_excel["SOCIAL"].sum(),
-            "TOTAL CAPITAL SOCIAL": df_excel["TOTAL CAPITAL SOCIAL"].sum()
-        }
+        if hoja not in df_balance:
+            montos_activo[clave] = 0.0
+            continue
 
-        df_excel = pd.concat(
-            [df_excel, pd.DataFrame([fila_total])],
-            ignore_index=True
+        df = df_balance[hoja].copy()
+
+        col_cuenta = _detect_col(df, ["Cuenta", "codigo", "Código", "CODIGO", "CÓDIGO"])
+        col_monto = next((c for c in df.columns if "saldo final" in str(c).lower()), None)
+
+        if not col_cuenta or not col_monto:
+            montos_activo[clave] = 0.0
+            continue
+
+        df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
+        df[col_monto] = _to_num_series(df[col_monto])
+
+        montos_activo[clave] = float(df.loc[df[col_cuenta] == str(cuenta_objetivo).strip(), col_monto].sum())
+
+    # ====== 3) Bloques y totales según tu regla ======
+    # Bloque 1: (como imagen) HDL-WH + HDL-WH(DEUDA vacío) + FWD-WH + EHM-WH
+    b1_activos = [
+        ("HLD-WH", montos_activo.get("HDL-WH", 0.0)),
+        ("FWD-WH", montos_activo.get("FWD-WH", 0.0)),
+        ("EHM-WH", montos_activo.get("EHM-WH", 0.0)),
+    ]
+    b1_total_activo = sum(v for _, v in b1_activos if isinstance(v, (int, float)))
+    b1_total_social = capital_social_emp.get("WH", 0.0)
+
+    # Bloques 2-5: una fila cada uno
+    bloques = [
+        ("EHM-FWD", montos_activo.get("EHM-FWD", 0.0), capital_social_emp.get("FWD", 0.0), "B2"),
+        ("EHM-UBIKARGA", montos_activo.get("EHM-UBIKARGA", 0.0), capital_social_emp.get("UBIKARGA", 0.0), "B3"),
+        ("EHM-GREEN", montos_activo.get("EHM-GREEN", 0.0), capital_social_emp.get("GREEN", 0.0), "B4"),
+        ("EHM-RESA", montos_activo.get("EHM-RESA", 0.0), capital_social_emp.get("RESA", 0.0), "B5"),
+        ("EHM-HOLDING", montos_activo.get("EHM-HOLDING",0.0),capital_social_emp.get("HOLDING",0.0),"B6")
+    ]
+
+    # ====== 4) Totales para session_state (si los sigues usando) ======
+    # Aquí dejo el total_activo como suma de TODAS las inversiones_dict (como antes)
+    # y total_social como suma de los socials de bloque (WH/FWD/UBI/GREEN/RESA) + (0 para otras).
+    total_activo = float(sum(montos_activo.values()))
+    total_social = float(b1_total_social + sum(b[2] for b in bloques))
+    goodwill = (total_activo + total_social) * -1
+
+    st.session_state["total_inversiones"] = total_activo
+    st.session_state["total_social"] = total_social
+    st.session_state["GOODWILL"] = goodwill
+
+    # ====== 5) Render EXACTO estilo Excel (HTML/CSS) ======
+    st.markdown(
+        """
+        <style>
+          .inv-wrap { width: 100%; }
+          table.inv {
+            border-collapse: collapse;
+            width: 100%;
+            font-family: Arial, sans-serif;
+            font-size: 13px;
+          }
+          table.inv td, table.inv th {
+            border: 1px solid #d9d9d9;
+            padding: 6px 8px;
+            vertical-align: middle;
+          }
+          table.inv th {
+            font-weight: 700;
+            text-align: center;
+            background: #ffffff;
+          }
+          td.lbl { text-align: left; width: 38%; }
+          td.num { text-align: right; width: 20%; white-space: nowrap; }
+          td.diff { text-align: right; width: 22%; white-space: nowrap; }
+          tr.yellow td { background: #fff200; font-weight: 700; }
+          tr.red td { background: #ff0000; font-weight: 700; color: #000000; }
+          td.box { border: 2px solid #000000 !important; }
+          .spacer { height: 14px; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    def render_header():
+        return (
+            "<tr>"
+            "<th class='lbl'>INVERSIONES EN OTRAS COMPAÑÍAS</th>"
+            "<th>ACTIVO</th>"
+            "<th>SOCIAL</th>"
+            "<th></th>"
+            "</tr>"
         )
 
-        # ===============================
-        # MOSTRAR COMO EXCEL
-        # ===============================
-        def highlight_total(row):
-            if row["DESCRIPCIÓN"] in ["TOTAL", "TOTAL CAPITAL SOCIAL"]:
-                return ["background-color: #fff200"] * len(row)
-            return [""] * len(row)
-        st.dataframe(
-            df_excel.style
-            .format({
-                "ACTIVO": "${:,.2f}",
-                "SOCIAL": "${:,.2f}",
-                "TOTAL CAPITAL SOCIAL": "${:,.2f}"
-            })
-            .apply(highlight_total, axis=1),
-            use_container_width=True,
-            hide_index=True
+    def render_bloque(rows, total_activo_b, total_social_b, box_social_row_idx=None):
+        html = []
+        html.append('<div class="inv-wrap"><table class="inv">')
+        html.append(render_header())
+
+        for i, r in enumerate(rows):
+            lbl, activo = r
+            social = None
+            diff = None
+
+            social_cls = "num"
+            if box_social_row_idx is not None and i == box_social_row_idx:
+                social_cls = "num box"
+
+            html.append(
+                "<tr>"
+                f"<td class='lbl'>{lbl}</td>"
+                f"<td class='num'>{money_cell(activo)}</td>"
+                f"<td class='{social_cls}'>{money_cell(social)}</td>"
+                f"<td class='diff'>{money_cell(diff)}</td>"
+                "</tr>"
+            )
+
+        # Total amarillo: ACTIVO suma / SOCIAL capital social empresa
+        tdiff = (total_activo_b or 0.0) + (total_social_b or 0.0)
+        html.append(
+            "<tr class='yellow'>"
+            "<td class='lbl'>TOTAL CAPITAL SOCIAL</td>"
+            f"<td class='num'>{money_cell(total_activo_b)}</td>"
+            f"<td class='num'>{money_cell(total_social_b)}</td>"
+            f"<td class='diff'>{money_cell(tdiff)}</td>"
+            "</tr>"
         )
 
+        html.append("</table></div>")
+        return "\n".join(html)
 
-        # ===============================
-        # GUARDAR EN SESSION STATE
-        # ===============================
-        st.session_state["total_inversiones"] = total_activo
-        st.session_state["total_social"] = total_social
-        st.session_state["GOODWILL"] = goodwill
+    # ---- BLOQUE 1
+    st.markdown(render_bloque(b1_activos, b1_total_activo, b1_total_social), unsafe_allow_html=True)
+    st.markdown("<div class='spacer'></div>", unsafe_allow_html=True)
 
-        return total_activo, total_social, goodwill
+    # ---- BLOQUES 2-5
+    for lbl, activo, social_total, tag in bloques:
+        rows = [(lbl, activo)]
+        # En tu imagen, el SOCIAL de EHM-RESA va encuadrado (borde negro)
+        box_idx = 0 if lbl == "EHM-RESA" else None
+        st.markdown(render_bloque(rows, activo, social_total, box_social_row_idx=box_idx), unsafe_allow_html=True)
+        st.markdown("<div class='spacer'></div>", unsafe_allow_html=True)
+
+    # ====== 6) (Opcional) Consolidación / goodwill como antes (lo dejo igual que tu lógica) ======
+    st.subheader("Consolidación Inversiones en Acciones")
+
+    df_consol = pd.DataFrame({
+        "CONCEPTO": ["INVERSIONES EN ACCIONES", "CAPITAL SOCIAL", "GOODWILL", "TOTAL"],
+        "DEBE": [0.0, -total_social, -goodwill, (0.0 - total_social - goodwill)],
+        "HABER": [total_activo, 0.0, 0.0, total_activo],
+    })
+
+    st.dataframe(
+        df_consol.style.format({"DEBE": "${:,.2f}", "HABER": "${:,.2f}"}),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    return total_activo, total_social, goodwill
+
 
     def tabla_ingresos_egresos(balance_url, info_manual):
         st.subheader("Ingresos y Gastos del Ejercicio")
@@ -832,10 +950,10 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 )
                 df_cxp[col_cr] = pd.to_numeric(df_cxp[col_cr], errors="coerce").fillna(0)
                 if col_etiqueta:
-                    df_cxp[col_etiqueta] = df_cxp[col_etiqueta].astype(str).str.strip()
-                    monto_cxp_cr = float(df_cxp.loc[df_cxp[col_etiqueta].str.upper() == "CXP", col_cr].sum())
+                    et = df_cxp[col_etiqueta].astype(str).str.upper().str.strip()
+                    mask_cxp = et.str.contains("CXP") | et.str.contains("PROVEED")
+                    monto_cxp_cr = float(df_cxp.loc[mask_cxp, col_cr].sum())
                     if monto_cxp_cr == 0:
-                        # fallback: suma todo el CR si no viene la fila exacta
                         monto_cxp_cr = float(df_cxp[col_cr].sum())
                 else:
                     monto_cxp_cr = float(df_cxp[col_cr].sum())
@@ -881,6 +999,12 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "HABER"
         ] = df_total["ACUMULADO"]
 
+        df_total.loc[
+            (df_total["CLASIFICACION"] == "PASIVO") &
+            (df_total["CATEGORIA"].str.contains("Anticipos de ISR", case=False)),
+            "DEBE"
+        ] = df_total["ACUMULADO"]
+
         acreedores_relacionados = df_total.loc[
             (df_total["CLASIFICACION"] == "PASIVO") &
             (df_total["CATEGORIA"].str.contains("ACREEDORES RELACIONADOS", case=False)),
@@ -905,7 +1029,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             (df_total["CLASIFICACION"] == "PASIVO") &
             (df_total["CATEGORIA"].str.contains("ACREEDORES RELACIONADOS", case=False)),
             "DEBE"
-        ] = acreedores_relacionados*-1 + deudores_relacionados
+        ] = acreedores_relacionados*-1
 
         df_total.loc[
             df_total["CATEGORIA"].str.contains("IVA POR TRASLADAR", case=False),
@@ -964,14 +1088,6 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             (df_total["CATEGORIA"].str.contains("IVA POR TRASLADAR", case=False)),
             "DEBE"
         ] = ajuste_iva_acreditable
-
-
-        df_total.loc[
-            (df_total["CLASIFICACION"] == "PASIVO") &
-            (df_total["CATEGORIA"].str.contains("Anticipos de ISR", case=False)),
-            "DEBE"
-        ] = df_total["ACUMULADO"]
-
 
         df_total["TOTALES"] = df_total["ACUMULADO"] + df_total["DEBE"] - df_total["HABER"]
 
@@ -1280,6 +1396,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
