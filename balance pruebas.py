@@ -1248,7 +1248,7 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         
         return df_editado
 
-    total_activo, total_social, goodwill = tabla_inversiones(balance_url)
+    total_activo, total_social, goodwill = tabla_inversiones(balance_url, mapeo_url)
     df_resultado, df_final = tabla_ingresos_egresos(balance_url, info_manual)
     total_p_facturados, iva_p_pagar, total_p_facturar = tabla_ingresos_gastos2(df_resultado, info_manual)
     provision_gastos, iva_p_acreditar, total_g_por_facturar, reconocimiento_impuestos = tabla_gastos2(df_resultado, info_manual)
@@ -1396,6 +1396,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
