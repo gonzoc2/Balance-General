@@ -363,11 +363,11 @@ elif selected == "BALANCE GENERAL ACUMULADO":
         
     def tabla_inversiones(balance_url, mapeo_url):
         st.subheader("Inversiones entre Compañías")
-    
+
         # ====== Cargar fuentes ======
         df_balance = cargar_balance(balance_url, EMPRESAS)   # dict: {hoja: df}
         df_mapeo = cargar_mapeo(mapeo_url)                  # df
-    
+
         inversiones_dict = {
             "HDL-WH": {"hoja": "HOLDING", "Cuenta": "139000001"},
             "EHM-WH": {"hoja": "EHM", "Cuenta": "139000001"},
@@ -378,25 +378,25 @@ elif selected == "BALANCE GENERAL ACUMULADO":
             "EHM-RESA": {"hoja": "EHM", "Cuenta": "139000007"},
             "EHM-HOLDING": {"hoja": "EHM", "Cuenta": "139000005"},
         }
-    
+
         def _to_num_series(s):
             return (
                 s.astype(str)
-                 .replace(r"[\$,]", "", regex=True)
-                 .pipe(pd.to_numeric, errors="coerce")
-                 .fillna(0.0)
+                .replace(r"[\$,]", "", regex=True)
+                .pipe(pd.to_numeric, errors="coerce")
+                .fillna(0.0)
             )
-    
+
         def _detect_col(df, candidates):
             cols = {str(c).strip().lower(): c for c in df.columns}
             for cand in candidates:
                 if cand.lower() in cols:
                     return cols[cand.lower()]
             return None
-    
+
         def money_pos(v): return f"$ {v:,.2f}"
         def money_neg(v): return f"-$ {abs(v):,.2f}"
-    
+
         def money_cell(v):
             if v is None:
                 return "-"
@@ -405,144 +405,145 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     return "-"
                 return money_neg(v) if v < 0 else money_pos(v)
             return str(v)
-    
+
         col_map_cuenta = _detect_col(df_mapeo, ["Cuenta", "CUENTA", "codigo", "Código", "CODIGO", "CÓDIGO"])
         col_map_categoria = _detect_col(df_mapeo, ["CATEGORIA", "Categoría", "categoria"])
         if not col_map_cuenta or not col_map_categoria:
             st.error("❌ No pude detectar en el MAPEO las columnas 'Cuenta' y 'CATEGORIA'.")
             st.write("Columnas detectadas en mapeo:", df_mapeo.columns.tolist())
             return 0.0, 0.0, 0.0
-    
+
         df_mapeo_local = df_mapeo.copy()
         df_mapeo_local[col_map_cuenta] = df_mapeo_local[col_map_cuenta].astype(str).str.strip()
         df_mapeo_local[col_map_categoria] = df_mapeo_local[col_map_categoria].astype(str).str.strip().str.upper()
-    
-        cuentas_capital_social = (
-            df_mapeo_local.loc[df_mapeo_local[col_map_categoria] == "CAPITAL SOCIAL", col_map_cuenta]
-            .dropna()
-            .astype(str).str.strip()
-            .unique()
-            .tolist()
-        )
-    
+
+        def cuentas_por_categoria(cat):
+            return (
+                df_mapeo_local.loc[df_mapeo_local[col_map_categoria] == str(cat).strip().upper(), col_map_cuenta]
+                .dropna().astype(str).str.strip().unique().tolist()
+            )
+
+        cuentas_capital_social = cuentas_por_categoria("CAPITAL SOCIAL")
+        cuentas_utilidades_acum = cuentas_por_categoria("UTILIDADES ACUMULADAS")
+
         if not cuentas_capital_social:
             st.error("❌ No encontré cuentas con CATEGORIA = 'CAPITAL SOCIAL' en tu mapeo.")
             return 0.0, 0.0, 0.0
-    
-        # hojas objetivo para capital social (las 5 que mencionas)
+
         hojas_capital = ["WH", "FWD", "UBIKARGA", "GREEN", "RESA", "HOLDING"]
-    
-        capital_social_emp = {}
-        for hoja in hojas_capital:
-            if hoja not in df_balance:
-                capital_social_emp[hoja] = 0.0
-                continue
-    
+
+        def suma_saldo_final(hoja, cuentas):
+            if hoja not in df_balance or not cuentas:
+                return 0.0
             dfh = df_balance[hoja].copy()
-    
             col_cuenta = _detect_col(dfh, ["Cuenta", "codigo", "Código", "CODIGO", "CÓDIGO"])
             col_saldo_final = next((c for c in dfh.columns if "saldo final" in str(c).lower()), None)
-    
             if not col_cuenta or not col_saldo_final:
-                capital_social_emp[hoja] = 0.0
-                continue
-    
+                return 0.0
             dfh[col_cuenta] = dfh[col_cuenta].astype(str).str.strip()
             dfh[col_saldo_final] = _to_num_series(dfh[col_saldo_final])
-    
-            cap = dfh.loc[dfh[col_cuenta].isin(cuentas_capital_social), col_saldo_final].sum()
-    
-            # Queremos que SOCIAL se vea como negativo (como tu Excel).
-            # Si el balance ya viene negativo, mantenemos magnitud.
+            return float(dfh.loc[dfh[col_cuenta].isin(cuentas), col_saldo_final].sum())
+
+        capital_social_emp = {}
+        for hoja in hojas_capital:
+            cap = suma_saldo_final(hoja, cuentas_capital_social)
             capital_social_emp[hoja] = float(abs(cap))
-    
-        # ====== 2) Activos por inversión (desde inversiones_dict) ======
+
+        utilidades_acum_holding = float(abs(suma_saldo_final("HOLDING", cuentas_utilidades_acum)))
         montos_activo = {}
         for clave, info in inversiones_dict.items():
             hoja = info["hoja"]
             cuenta_objetivo = info["Cuenta"]
-    
+
             if hoja not in df_balance:
                 montos_activo[clave] = 0.0
                 continue
-    
+
             df = df_balance[hoja].copy()
-    
+
             col_cuenta = _detect_col(df, ["Cuenta", "codigo", "Código", "CODIGO", "CÓDIGO"])
             col_monto = next((c for c in df.columns if "saldo final" in str(c).lower()), None)
-    
+
             if not col_cuenta or not col_monto:
                 montos_activo[clave] = 0.0
                 continue
-    
+
             df[col_cuenta] = df[col_cuenta].astype(str).str.strip()
             df[col_monto] = _to_num_series(df[col_monto])
-    
+
             montos_activo[clave] = float(df.loc[df[col_cuenta] == str(cuenta_objetivo).strip(), col_monto].sum())
-    
-        # ====== 3) Bloques y totales según tu regla ======
-        # Bloque 1: (como imagen) HDL-WH + HDL-WH(DEUDA vacío) + FWD-WH + EHM-WH
+
+        AJUSTE_HLD_WH = 2_583_631.94
+        if "HDL-WH" in montos_activo:
+            montos_activo["HDL-WH"] = float(montos_activo["HDL-WH"] - AJUSTE_HLD_WH)
+
         b1_activos = [
             ("HLD-WH", montos_activo.get("HDL-WH", 0.0)),
             ("FWD-WH", montos_activo.get("FWD-WH", 0.0)),
             ("EHM-WH", montos_activo.get("EHM-WH", 0.0)),
         ]
         b1_total_activo = sum(v for _, v in b1_activos if isinstance(v, (int, float)))
-        b1_total_social = capital_social_emp.get("WH", 0.0)
-    
-        # Bloques 2-5: una fila cada uno
+        b1_total_social = capital_social_emp.get("WH", 0.0) 
+
         bloques = [
             ("EHM-FWD", montos_activo.get("EHM-FWD", 0.0), capital_social_emp.get("FWD", 0.0), "B2"),
             ("EHM-UBIKARGA", montos_activo.get("EHM-UBIKARGA", 0.0), capital_social_emp.get("UBIKARGA", 0.0), "B3"),
             ("EHM-GREEN", montos_activo.get("EHM-GREEN", 0.0), capital_social_emp.get("GREEN", 0.0), "B4"),
             ("EHM-RESA", montos_activo.get("EHM-RESA", 0.0), capital_social_emp.get("RESA", 0.0), "B5"),
-            ("EHM-HOLDING", montos_activo.get("EHM-HOLDING",0.0),capital_social_emp.get("HOLDING",0.0),"B6")
+            ("EHM-HOLDING", montos_activo.get("EHM-HOLDING", 0.0), capital_social_emp.get("HOLDING", 0.0), "B6")
         ]
-    
-        # ====== 4) Totales para session_state (si los sigues usando) ======
-        # Aquí dejo el total_activo como suma de TODAS las inversiones_dict (como antes)
-        # y total_social como suma de los socials de bloque (WH/FWD/UBI/GREEN/RESA) + (0 para otras).
+
         total_activo = float(sum(montos_activo.values()))
-        total_social = float(b1_total_social + sum(b[2] for b in bloques))
-        goodwill = (total_activo + total_social) * -1
-    
+        total_social = float(b1_total_social + sum(b[2] for b in bloques)) 
+
         st.session_state["total_inversiones"] = total_activo
         st.session_state["total_social"] = total_social
-        st.session_state["GOODWILL"] = goodwill
-    
-        # ====== 5) Render EXACTO estilo Excel (HTML/CSS) ======
+
+        social_en_blanco_sum = 0.0
+
+        for _, activo in b1_activos:
+            if isinstance(activo, (int, float)):
+                social_en_blanco_sum += abs(float(activo))
+
+        for lbl, activo, _, _ in bloques:
+            if lbl == "EHM-HOLDING":
+                continue
+            if isinstance(activo, (int, float)):
+                social_en_blanco_sum += abs(float(activo))
+
+
         st.markdown(
             """
             <style>
-              .inv-wrap { width: 100%; }
-              table.inv {
+            .inv-wrap { width: 100%; }
+            table.inv {
                 border-collapse: collapse;
                 width: 100%;
                 font-family: Arial, sans-serif;
                 font-size: 13px;
-              }
-              table.inv td, table.inv th {
+            }
+            table.inv td, table.inv th {
                 border: 1px solid #d9d9d9;
                 padding: 6px 8px;
                 vertical-align: middle;
-              }
-              table.inv th {
+            }
+            table.inv th {
                 font-weight: 700;
                 text-align: center;
                 background: #ffffff;
-              }
-              td.lbl { text-align: left; width: 38%; }
-              td.num { text-align: right; width: 20%; white-space: nowrap; }
-              td.diff { text-align: right; width: 22%; white-space: nowrap; }
-              tr.yellow td { background: #fff200; font-weight: 700; }
-              tr.red td { background: #ff0000; font-weight: 700; color: #000000; }
-              td.box { border: 2px solid #000000 !important; }
-              .spacer { height: 14px; }
+            }
+            td.lbl { text-align: left; width: 38%; }
+            td.num { text-align: right; width: 20%; white-space: nowrap; }
+            td.diff { text-align: right; width: 22%; white-space: nowrap; }
+            tr.yellow td { background: #fff200; font-weight: 700; }
+            tr.red td { background: #ff0000; font-weight: 700; color: #000000; }
+            td.box { border: 2px solid #000000 !important; }
+            .spacer { height: 14px; }
             </style>
             """,
             unsafe_allow_html=True
         )
-    
+
         def render_header():
             return (
                 "<tr>"
@@ -552,21 +553,29 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                 "<th></th>"
                 "</tr>"
             )
-    
+
         def render_bloque(rows, total_activo_b, total_social_b, box_social_row_idx=None):
+            """
+            - SOCIAL en blanco -> social = -abs(activo) (visual)
+            - AMARILLOS igual a tu cálculo actual, pero MOSTRANDO social en NEGATIVO
+            """
             html = []
             html.append('<div class="inv-wrap"><table class="inv">')
             html.append(render_header())
-    
+
             for i, r in enumerate(rows):
                 lbl, activo = r
+
                 social = None
+                if social is None and isinstance(activo, (int, float)):
+                    social = -abs(activo)
+
                 diff = None
-    
+
                 social_cls = "num"
                 if box_social_row_idx is not None and i == box_social_row_idx:
                     social_cls = "num box"
-    
+
                 html.append(
                     "<tr>"
                     f"<td class='lbl'>{lbl}</td>"
@@ -575,50 +584,108 @@ elif selected == "BALANCE GENERAL ACUMULADO":
                     f"<td class='diff'>{money_cell(diff)}</td>"
                     "</tr>"
                 )
-    
-            # Total amarillo: ACTIVO suma / SOCIAL capital social empresa
-            tdiff = (total_activo_b or 0.0) + (total_social_b or 0.0)
+
+            social_yellow = -abs(total_social_b or 0.0)
+            tdiff = (total_activo_b or 0.0) + social_yellow
+
             html.append(
                 "<tr class='yellow'>"
                 "<td class='lbl'>TOTAL CAPITAL SOCIAL</td>"
                 f"<td class='num'>{money_cell(total_activo_b)}</td>"
-                f"<td class='num'>{money_cell(total_social_b)}</td>"
+                f"<td class='num'>{money_cell(social_yellow)}</td>"
                 f"<td class='diff'>{money_cell(tdiff)}</td>"
                 "</tr>"
             )
-    
+
             html.append("</table></div>")
             return "\n".join(html)
-    
-        # ---- BLOQUE 1
+
         st.markdown(render_bloque(b1_activos, b1_total_activo, b1_total_social), unsafe_allow_html=True)
         st.markdown("<div class='spacer'></div>", unsafe_allow_html=True)
-    
-        # ---- BLOQUES 2-5
+
+        goodwill = 0.0  
+
         for lbl, activo, social_total, tag in bloques:
-            rows = [(lbl, activo)]
-            # En tu imagen, el SOCIAL de EHM-RESA va encuadrado (borde negro)
-            box_idx = 0 if lbl == "EHM-RESA" else None
-            st.markdown(render_bloque(rows, activo, social_total, box_social_row_idx=box_idx), unsafe_allow_html=True)
+            if lbl != "EHM-HOLDING":
+                rows = [(lbl, activo)]
+                box_idx = 0 if lbl == "EHM-RESA" else None
+                st.markdown(render_bloque(rows, activo, social_total, box_social_row_idx=box_idx), unsafe_allow_html=True)
+                st.markdown("<div class='spacer'></div>", unsafe_allow_html=True)
+                continue
+
+            social_holding_visual = -abs(capital_social_emp.get("HOLDING", 0.0))
+            util_holding_visual = -abs(utilidades_acum_holding)
+
+            total_activo_ultimo = float(activo)
+            total_social_ultimo = float(social_holding_visual + util_holding_visual)
+            total_diff_ultimo = total_activo_ultimo + total_social_ultimo
+
+            goodwill = abs(float(total_diff_ultimo))
+            st.session_state["GOODWILL"] = goodwill
+
+            html_last = []
+            html_last.append('<div class="inv-wrap"><table class="inv">')
+            html_last.append(render_header())
+
+            html_last.append(
+                "<tr>"
+                f"<td class='lbl'>{lbl}</td>"
+                f"<td class='num'>{money_cell(activo)}</td>"
+                f"<td class='num'>{money_cell(social_holding_visual)}</td>"
+                f"<td class='diff'>-</td>"
+                "</tr>"
+            )
+
+            html_last.append(
+                "<tr>"
+                "<td class='lbl'>UTILIDADES ACUM METODO DE PARTICIPACION</td>"
+                f"<td class='num'>-</td>"
+                f"<td class='num'>{money_cell(util_holding_visual)}</td>"
+                f"<td class='diff'>-</td>"
+                "</tr>"
+            )
+
+            html_last.append(
+                "<tr class='red'>"
+                "<td class='lbl'>TOTAL</td>"
+                f"<td class='num'>{money_cell(total_activo_ultimo)}</td>"
+                f"<td class='num'>{money_cell(total_social_ultimo)}</td>"
+                f"<td class='diff'>{money_cell(total_diff_ultimo)}</td>"
+                "</tr>"
+            )
+
+            social_yellow = -abs(social_total or 0.0)
+            tdiff = (activo or 0.0) + social_yellow
+            html_last.append(
+                "<tr class='yellow'>"
+                "<td class='lbl'>TOTAL CAPITAL SOCIAL</td>"
+                f"<td class='num'>{money_cell(activo)}</td>"
+                f"<td class='num'>{money_cell(social_yellow)}</td>"
+                f"<td class='diff'>{money_cell(tdiff)}</td>"
+                "</tr>"
+            )
+
+            html_last.append("</table></div>")
+            st.markdown("\n".join(html_last), unsafe_allow_html=True)
             st.markdown("<div class='spacer'></div>", unsafe_allow_html=True)
-    
-        # ====== 6) (Opcional) Consolidación / goodwill como antes (lo dejo igual que tu lógica) ======
+
         st.subheader("Consolidación Inversiones en Acciones")
-    
+
+        debe_capital_social = float(social_en_blanco_sum)
+
         df_consol = pd.DataFrame({
             "CONCEPTO": ["INVERSIONES EN ACCIONES", "CAPITAL SOCIAL", "GOODWILL", "TOTAL"],
-            "DEBE": [0.0, -total_social, -goodwill, (0.0 - total_social - goodwill)],
+            "DEBE": [0.0, debe_capital_social, goodwill, (0.0 + debe_capital_social + goodwill)],
             "HABER": [total_activo, 0.0, 0.0, total_activo],
         })
-    
+
         st.dataframe(
             df_consol.style.format({"DEBE": "${:,.2f}", "HABER": "${:,.2f}"}),
             use_container_width=True,
             hide_index=True
         )
-    
-        return total_activo, total_social, goodwill
 
+        return total_activo, total_social, goodwill
 
     def tabla_ingresos_egresos(balance_url, info_manual):
         st.subheader("Ingresos y Gastos del Ejercicio")
@@ -1396,6 +1463,7 @@ elif selected == "BALANCE FINAL":
 
 
    
+
 
 
 
