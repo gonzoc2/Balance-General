@@ -32,7 +32,7 @@ COLUMNAS_MONTO = ["Saldo final", "Saldo"]
 CLASIFICACIONES_PRINCIPALES = ["ACTIVO", "PASIVO", "CAPITAL"]
 
 balance_url = st.secrets["urls"]["balance_url"]
-balance_ly = st.secrets["urils"]["balance_ly"]
+balance_ly = st.secrets["urls"]["balance_ly"]
 mapeo_url = st.secrets["urls"]["mapeo_url"]
 info_manual_url = st.secrets["urls"]["info_manual"]  # si lo ocupas después
 
@@ -551,6 +551,7 @@ elif selected == "BALANCE POR EMPRESA":
 
 
    
+
 
 
 
