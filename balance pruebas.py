@@ -26,16 +26,13 @@ st.markdown(
 
 
 EMPRESAS = ["HOLDING", "FWD", "WH", "UBIKARGA", "EHM", "RESA", "GREEN"]
-COLUMNAS_CUENTA = ["Cuenta", "Descripción"]
+COLUMNAS_CUENTA = ["Descripción"]
+NUMERO_CUENTA = ["Cuenta"]
 COLUMNAS_MONTO = ["Saldo final", "Saldo"]
 CLASIFICACIONES_PRINCIPALES = ["ACTIVO", "PASIVO", "CAPITAL"]
 
-RANGO_INGRESO_MIN = 400_000_000
-RANGO_INGRESO_MAX = 500_000_000
-RANGO_GASTO_MIN = 500_000_000
-
-
 balance_url = st.secrets["urls"]["balance_url"]
+balance_ly = st.secrets["urils"]["balance_ly"]
 mapeo_url = st.secrets["urls"]["mapeo_url"]
 info_manual_url = st.secrets["urls"]["info_manual"]  # si lo ocupas después
 
@@ -45,8 +42,6 @@ with st.sidebar:
         # Limpia cache y reinicia la app
         st.cache_data.clear()
         st.rerun()
-
-    st.caption("Ingresos: (400M, 500M) | Gastos: > 500M")
 
 def limpiar_cuenta(x):
     """Limpia valores numéricos de la columna 'Cuenta'"""
@@ -103,14 +98,13 @@ def cargar_balance_multi_hojas(url: str, hojas: list[str]) -> dict[str, pd.DataF
 
 OPTIONS = [
     "BALANCE GENERAL", #balance general
-    "BALANCE POR EMPRESA",  #balance por empresa
-    "COMPARATIVO",
+    "BALANCE POR EMPRESA", 
 ]
 
 selected = option_menu(
     menu_title=None,
     options=OPTIONS,
-    icons=["building", "bar-chart-line", "clipboard-data"],
+    icons=["building", "bar-chart-line"],
     default_index=0,
     orientation="horizontal",
 )
@@ -124,12 +118,9 @@ def tabla_balance_por_empresa():
         st.stop()
 
     data_empresas = cargar_balance_multi_hojas(balance_url, EMPRESAS)
-
     resultados_balance = []
     balances_detallados = {}
     cuentas_no_mapeadas = []
-
-    # --- 1) Preparar balance por empresa (mapeo)
     for empresa in EMPRESAS:
         df = data_empresas.get(empresa, pd.DataFrame()).copy()
         if df.empty:
@@ -144,17 +135,14 @@ def tabla_balance_por_empresa():
 
         df[col_cuenta] = df[col_cuenta].apply(limpiar_cuenta)
         df[col_monto] = _to_numeric_money(df[col_monto])
-
         df = df.dropna(subset=[col_cuenta])
         df = df.groupby(col_cuenta, as_index=False)[col_monto].sum()
-
         df_merged = df.merge(
             df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
             left_on=col_cuenta,
             right_on="Cuenta",
             how="left",
         )
-
         no_mapeadas = df_merged[df_merged["CLASIFICACION"].isna()].copy()
         if not no_mapeadas.empty:
             no_mapeadas["EMPRESA"] = empresa
@@ -179,40 +167,30 @@ def tabla_balance_por_empresa():
         st.error("❌ No se pudo generar información consolidada.")
         return
 
-    # --- 2) Estado de Resultados por empresa (POR RANGO DE CUENTA)
     data_resultados = []
     for empresa in EMPRESAS:
         df_raw = data_empresas.get(empresa, pd.DataFrame()).copy()
         if df_raw.empty:
             continue
 
-        col_cuenta = _encontrar_columna(df_raw, COLUMNAS_CUENTA)
-        col_monto = _encontrar_columna(df_raw, COLUMNAS_MONTO)
-        if not col_cuenta or not col_monto:
+        col_cuenta_raw = _encontrar_columna(df_raw, NUMERO_CUENTA)
+        col_monto_raw = _encontrar_columna(df_raw, COLUMNAS_MONTO)
+        if not col_cuenta_raw or not col_monto_raw:
+            st.warning(f"⚠️ {empresa}: no encontré columnas de Cuenta/Saldo para resultados.")
             continue
-
-        df_raw[col_cuenta] = df_raw[col_cuenta].apply(limpiar_cuenta)
-        df_raw[col_monto] = _to_numeric_money(df_raw[col_monto])
-        df_raw = df_raw.dropna(subset=[col_cuenta])
-
-        # AGRUPA por cuenta para evitar duplicados
-        df_cta = df_raw.groupby(col_cuenta, as_index=False)[col_monto].sum()
-
+        df_raw[col_cuenta_raw] = df_raw[col_cuenta_raw].apply(limpiar_cuenta)
+        df_raw[col_monto_raw] = _to_numeric_money(df_raw[col_monto_raw])
+        df_raw = df_raw.dropna(subset=[col_cuenta_raw])
+        df_cta = df_raw.groupby(col_cuenta_raw, as_index=False)[col_monto_raw].sum()
         ingreso = df_cta.loc[
-            (df_cta[col_cuenta] > RANGO_INGRESO_MIN) & (df_cta[col_cuenta] < RANGO_INGRESO_MAX),
-            col_monto
+            (df_cta[col_cuenta_raw] > 400_000_000) & (df_cta[col_cuenta_raw] < 500_000_000),
+            col_monto_raw
         ].sum()
-
         gasto = df_cta.loc[
-            (df_cta[col_cuenta] > RANGO_GASTO_MIN),
-            col_monto
+            (df_cta[col_cuenta_raw] > 500_000_000),
+            col_monto_raw
         ].sum()
-
-        # si tus gastos vienen negativos, esto puede cambiar:
-        # utilidad = ingreso + gasto (como lo traías)
-        # o utilidad = ingreso - gasto (si gasto es positivo)
         utilidad = ingreso + gasto
-
         data_resultados.append({
             "EMPRESA": empresa,
             "INGRESO": float(ingreso),
@@ -221,15 +199,16 @@ def tabla_balance_por_empresa():
         })
 
     df_resultados = pd.DataFrame(data_resultados)
-
-    st.markdown("### Estado de Resultados por Empresa (por rango de cuenta)")
+    st.markdown("### Estado de Resultados por Empresa")
     if df_resultados.empty:
         st.info("No se pudo calcular estado de resultados (revisa hojas/columnas).")
     else:
         df_resultados_t = (
-            df_resultados.set_index("EMPRESA").T.reset_index().rename(columns={"index": "CONCEPTO"})
+            df_resultados.set_index("EMPRESA")
+            .T
+            .reset_index()
+            .rename(columns={"index": "CONCEPTO"})
         )
-
         df_resultados_t["TOTAL"] = df_resultados_t[
             [c for c in df_resultados_t.columns if c != "CONCEPTO"]
         ].sum(axis=1)
@@ -237,41 +216,28 @@ def tabla_balance_por_empresa():
         for col in df_resultados_t.columns:
             if col != "CONCEPTO":
                 df_resultados_t[col] = df_resultados_t[col].apply(lambda x: f"${x:,.2f}")
-
         st.dataframe(df_resultados_t, use_container_width=True, hide_index=True)
-
         utilidad_total = df_resultados["UTILIDAD"].sum()
-        st.markdown(f"💵 **Utilidad consolidada:** ${utilidad_total:,.2f}")
-
-    # --- 3) Consolidado balance
     df_final = reduce(
         lambda l, r: pd.merge(l, r, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
         resultados_balance
     ).fillna(0)
-
     df_final["TOTAL ACUMULADO"] = df_final[EMPRESAS].sum(axis=1)
-
-    # --- 4) Render por clasificación
     for clasif in CLASIFICACIONES_PRINCIPALES:
         st.markdown(f"### 🔹 {clasif}")
         df_clasif = df_final[df_final["CLASIFICACION"] == clasif].copy()
-
         if df_clasif.empty:
             st.info(f"No hay cuentas clasificadas como {clasif}.")
             continue
-
         subtotal = pd.DataFrame({
             "CLASIFICACION": [clasif],
             "CATEGORIA": [f"TOTAL {clasif}"]
         })
         for col in EMPRESAS + ["TOTAL ACUMULADO"]:
             subtotal[col] = df_clasif[col].sum()
-
         df_clasif = pd.concat([df_clasif, subtotal], ignore_index=True)
-
         for col in EMPRESAS + ["TOTAL ACUMULADO"]:
             df_clasif[col] = df_clasif[col].apply(lambda x: f"${x:,.2f}")
-
         with st.expander(f"{clasif}", expanded=(clasif == "CAPITAL")):
             st.dataframe(
                 df_clasif.drop(columns=["CLASIFICACION"]),
@@ -284,7 +250,6 @@ def tabla_balance_por_empresa():
         for c in CLASIFICACIONES_PRINCIPALES
     }
     diferencia = totales["ACTIVO"] + (totales["PASIVO"] + totales["CAPITAL"])
-
     resumen_final = pd.DataFrame({
         "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA"],
         "Monto Total": [
@@ -302,14 +267,10 @@ def tabla_balance_por_empresa():
         st.success("✅ El balance está cuadrado (ACTIVO = PASIVO + CAPITAL).")
     else:
         st.error("❌ El balance no cuadra. Revisa cuentas/mapeo.")
-
-    # --- 5) Cuentas no mapeadas
     if cuentas_no_mapeadas:
         st.markdown("## ⚠️ Cuentas NO mapeadas detectadas")
         df_no_map = pd.concat(cuentas_no_mapeadas, ignore_index=True)
         st.dataframe(df_no_map, use_container_width=True, hide_index=True)
-
-    # --- 6) Descargar Excel
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         for empresa, df_emp in balances_detallados.items():
@@ -328,7 +289,7 @@ def tabla_balance_por_empresa():
     )
 
 def tabla_balance_general_acumulado():
-    col1, col2 = st.columns([1, 3])
+    col1, col2 = st.columns([1, 1])
     empresa_sel = col1.selectbox("Empresa", EMPRESAS, index=0)
 
     df_mapeo_local = cargar_mapeo(mapeo_url)
@@ -336,7 +297,9 @@ def tabla_balance_general_acumulado():
         st.stop()
 
     data_empresas = cargar_balance_multi_hojas(balance_url, [empresa_sel])
+    data_empresas_ly = cargar_balance_multi_hojas(balance_ly, [empresa_sel])    
     df_emp = data_empresas.get(empresa_sel, pd.DataFrame()).copy()
+    df_emp_ly = data_empresas_ly.get(empresa_sel, pd.DataFrame()).copy()
 
     if df_emp.empty:
         st.warning(f"⚠️ No hay datos para {empresa_sel}.")
@@ -344,18 +307,63 @@ def tabla_balance_general_acumulado():
 
     col_cuenta = _encontrar_columna(df_emp, COLUMNAS_CUENTA)
     col_monto = _encontrar_columna(df_emp, COLUMNAS_MONTO)
+    col_cuenta_ly = _encontrar_columna(df_emp_ly, COLUMNAS_CUENTA)
+    col_monto_ly = _encontrar_columna(df_emp_ly, COLUMNAS_MONTO)
 
     if not col_cuenta or not col_monto:
-        st.error(f"❌ {empresa_sel}: columnas inválidas (Cuenta / Saldo).")
+        st.error(f"❌ {empresa_sel}: columnas inválidas")
         st.stop()
 
-    # Limpieza y agrupación
+    data_resultados = []
+    for empresa in EMPRESAS:
+        df_raw = data_empresas.get(empresa, pd.DataFrame()).copy()
+        if df_raw.empty:
+            continue
+
+        col_cuenta_raw = _encontrar_columna(df_raw, NUMERO_CUENTA)
+        col_monto_raw = _encontrar_columna(df_raw, COLUMNAS_MONTO)
+
+        if not col_cuenta_raw or not col_monto_raw:
+            st.warning(f"⚠️ {empresa}: no encontré columnas de Cuenta/Saldo para resultados.")
+            continue
+        df_raw[col_cuenta_raw] = df_raw[col_cuenta_raw].apply(limpiar_cuenta)
+        df_raw[col_monto_raw] = _to_numeric_money(df_raw[col_monto_raw])
+
+        df_raw = df_raw.dropna(subset=[col_cuenta_raw])
+        df_cta = df_raw.groupby(col_cuenta_raw, as_index=False)[col_monto_raw].sum()
+
+        ingreso = df_cta.loc[
+            (df_cta[col_cuenta_raw] > 400_000_000) & (df_cta[col_cuenta_raw] < 500_000_000),
+            col_monto_raw
+        ].sum()
+
+        gasto = df_cta.loc[
+            (df_cta[col_cuenta_raw] > 500_000_000),
+            col_monto_raw
+        ].sum()
+
+        utilidad = ingreso + gasto
+
+        data_resultados.append({
+            "EMPRESA": empresa,
+            "INGRESO": float(ingreso),
+            "GASTO": float(gasto),
+            "UTILIDAD": float(utilidad),
+        })
+
+    df_resultados = pd.DataFrame(data_resultados)
+    st.markdown("### Estado de Resultados por Empresa")
+
     df_emp[col_cuenta] = df_emp[col_cuenta].apply(limpiar_cuenta)
     df_emp[col_monto] = _to_numeric_money(df_emp[col_monto])
     df_emp = df_emp.dropna(subset=[col_cuenta])
     df_emp = df_emp.groupby(col_cuenta, as_index=False)[col_monto].sum()
 
-    # Merge con mapeo
+    df_emp_ly[col_cuenta_ly] = df_emp_ly[col_cuenta_ly].apply(limpiar_cuenta)
+    df_emp_ly[col_monto_ly] = _to_numeric_money(df_emp_ly[col_monto_ly])
+    df_emp_ly = df_emp_ly.dropna(subset=[col_cuenta_ly])
+    df_emp_ly = df_emp_ly.groupby(col_cuenta_ly, as_index=False)[col_monto_ly].sum()
+
     df_merged = df_emp.merge(
         df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
         left_on=col_cuenta,
@@ -363,21 +371,22 @@ def tabla_balance_general_acumulado():
         how="left",
     )
 
+    df_merged_ly = df_emp_ly.merge(df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]], left_on=col_cuenta, right_on="Cuenta", how="left",)
+
     df_no_mapeadas = df_merged[df_merged["CLASIFICACION"].isna()].copy()
     df_ok = df_merged[~df_merged["CLASIFICACION"].isna()].copy()
+    df_ok_ly = df_merged_ly[~df_merged_ly["CLASIFICACION"].isna()].copy()
 
     if df_ok.empty:
         st.warning(f"⚠️ {empresa_sel}: sin coincidencias con el mapeo.")
         st.stop()
 
-    # Tabla tipo reporte (ACTIVO -> PASIVO -> CAPITAL)
     ORDEN = ("ACTIVO", "PASIVO", "CAPITAL")
 
     df_ok["CLASIFICACION"] = df_ok["CLASIFICACION"].astype(str).str.upper().str.strip()
     df_ok["CATEGORIA"] = df_ok["CATEGORIA"].astype(str).str.strip()
     df_ok[col_monto] = pd.to_numeric(df_ok[col_monto], errors="coerce").fillna(0.0)
 
-    # Filtra headers del mapeo (MAYOR) y N/A
     df_ok = df_ok[df_ok["CLASIFICACION"].isin(ORDEN)].copy()
     df_ok = df_ok[df_ok["CATEGORIA"].str.upper().ne("MAYOR")].copy()
 
@@ -386,37 +395,106 @@ def tabla_balance_general_acumulado():
         .sum()
         .rename(columns={col_monto: "MONTO"})
     )
+    df_merged_ly = df_emp_ly.merge(
+        df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
+        left_on=col_cuenta_ly,
+        right_on="Cuenta",
+        how="left",
+    )
+
+    df_ok_ly = df_merged_ly[~df_merged_ly["CLASIFICACION"].isna()].copy()
+
+    df_ok_ly["CLASIFICACION"] = df_ok_ly["CLASIFICACION"].astype(str).str.upper().str.strip()
+    df_ok_ly["CATEGORIA"] = df_ok_ly["CATEGORIA"].astype(str).str.strip()
+    df_ok_ly[col_monto_ly] = pd.to_numeric(df_ok_ly[col_monto_ly], errors="coerce").fillna(0.0)
+
+    df_ok_ly = df_ok_ly[df_ok_ly["CLASIFICACION"].isin(ORDEN)].copy()
+    df_ok_ly = df_ok_ly[df_ok_ly["CATEGORIA"].str.upper().ne("MAYOR")].copy()
+
+    df_grp_ly = (
+        df_ok_ly.groupby(["CLASIFICACION", "CATEGORIA"], as_index=False)[col_monto_ly]
+        .sum()
+        .rename(columns={col_monto_ly: "MONTO_LY"})
+    )
+
+    df_base = df_grp.merge(df_grp_ly, on=["CLASIFICACION", "CATEGORIA"], how="outer")
+    df_base["MONTO"] = pd.to_numeric(df_base["MONTO"], errors="coerce").fillna(0.0)
+    df_base["MONTO_LY"] = pd.to_numeric(df_base["MONTO_LY"], errors="coerce").fillna(0.0)
+
+    # % variación: (Actual / LY) - 1  (si LY=0 -> vacío)
+    df_base["% VARIACION"] = np.where(
+        df_base["MONTO_LY"].abs() > 1e-9,
+        (df_base["MONTO"] / df_base["MONTO_LY"]) - 1.0,
+        np.nan
+    )
 
     rows = []
     totales = {}
+    totales_ly = {}
 
     for clasif in ORDEN:
-        sub = df_grp[df_grp["CLASIFICACION"] == clasif].copy()
-        total_clasif = float(sub["MONTO"].sum()) if not sub.empty else 0.0
-        totales[clasif] = total_clasif
+        sub = df_base[df_base["CLASIFICACION"] == clasif].copy()
 
-        rows.append({"SECCION": clasif, "CUENTA": "", "MONTO": total_clasif, "_tipo": "header"})
+        total_act = float(sub["MONTO"].sum()) if not sub.empty else 0.0
+        total_ly  = float(sub["MONTO_LY"].sum()) if not sub.empty else 0.0
 
+        totales[clasif] = total_act
+        totales_ly[clasif] = total_ly
+
+        # Header / total sección
+        rows.append({
+            "SECCION": clasif,
+            "CUENTA": "",
+            "MONTO": total_act,
+            "MONTO_LY": total_ly,
+            "% VARIACION": (total_act / total_ly - 1.0) if abs(total_ly) > 1e-9 else np.nan,
+            "_tipo": "header"
+        })
+
+        # Detalle categorías
         if not sub.empty:
             sub = sub.sort_values("CATEGORIA")
             for _, r in sub.iterrows():
-                rows.append({"SECCION": "", "CUENTA": f"{r['CATEGORIA']}", "MONTO": float(r["MONTO"]), "_tipo": "detail"})
+                rows.append({
+                    "SECCION": "",
+                    "CUENTA": str(r["CATEGORIA"]),
+                    "MONTO": float(r["MONTO"]),
+                    "MONTO_LY": float(r["MONTO_LY"]),
+                    "% VARIACION": float(r["% VARIACION"]) if pd.notna(r["% VARIACION"]) else np.nan,
+                    "_tipo": "detail"
+                })
 
-        rows.append({"SECCION": "", "CUENTA": "", "MONTO": None, "_tipo": "blank"})
+        # Línea en blanco
+        rows.append({"SECCION": "", "CUENTA": "", "MONTO": None, "MONTO_LY": None, "% VARIACION": None, "_tipo": "blank"})
 
-    # Cuadre correcto
-    dif = float(totales.get("ACTIVO", 0.0) - (totales.get("PASIVO", 0.0) + totales.get("CAPITAL", 0.0)))
-    rows.append({"SECCION": "RESUMEN", "CUENTA": "DIFERENCIA (ACTIVO - (PASIVO + CAPITAL))", "MONTO": dif, "_tipo": "header"})
+    # Diferencia (balance)
+    dif = float(totales.get("ACTIVO", 0.0) + (totales.get("PASIVO", 0.0) + totales.get("CAPITAL", 0.0)))
+    dif_ly = float(totales_ly.get("ACTIVO", 0.0) + (totales_ly.get("PASIVO", 0.0) + totales_ly.get("CAPITAL", 0.0)))
+
+    rows.append({
+        "SECCION": "RESUMEN",
+        "CUENTA": "DIFERENCIA",
+        "MONTO": dif,
+        "MONTO_LY": dif_ly,
+        "% VARIACION": (dif / dif_ly - 1.0) if abs(dif_ly) > 1e-9 else np.nan,
+        "_tipo": "header"
+    })
 
     df_out_raw = pd.DataFrame(rows)
-
     def fmt_money(x):
         if x is None or (isinstance(x, float) and pd.isna(x)):
             return ""
         return f"${float(x):,.2f}"
 
+    def fmt_pct(x):
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return ""
+        return f"{x*100:,.1f}%"
+
     df_out_show = df_out_raw.copy()
     df_out_show["MONTO"] = df_out_show["MONTO"].apply(fmt_money)
+    df_out_show["MONTO_LY"] = df_out_show["MONTO_LY"].apply(fmt_money)
+    df_out_show["% VARIACION"] = df_out_show["% VARIACION"].apply(fmt_pct)
 
     def estilo_reporte(row):
         t = row.get("_tipo", "")
@@ -428,20 +506,22 @@ def tabla_balance_general_acumulado():
 
     st.markdown(f"### {empresa_sel}")
     st.dataframe(
-        df_out_show.style
+        df_out_show[["SECCION", "CUENTA", "MONTO", "MONTO_LY", "% VARIACION", "_tipo"]]
+            .style
             .apply(estilo_reporte, axis=1)
             .hide(axis="columns", subset=["_tipo"]),
         use_container_width=True,
         hide_index=True
     )
 
+    # Mensaje de cuadre (con dif actual)
     if abs(dif) < 1:
-        st.success("✅ El balance está cuadrado (ACTIVO = PASIVO + CAPITAL).")
+        st.success("✅ El balance está cuadrado")
     else:
         st.error("❌ El balance no cuadra. Revisa mapeo/cuentas.")
 
     if not df_no_mapeadas.empty:
-        st.markdown("## ⚠️ Cuentas NO mapeadas (empresa seleccionada)")
+        st.markdown("## ⚠️ Cuentas NO mapeadas")
         cols_show = [col_cuenta, col_monto]
         cols_show = [c for c in cols_show if c in df_no_mapeadas.columns]
         df_nm = df_no_mapeadas[cols_show].copy().rename(columns={col_cuenta: "Cuenta", col_monto: "Saldo"})
@@ -451,7 +531,6 @@ def tabla_balance_general_acumulado():
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df_ok.to_excel(writer, index=False, sheet_name=f"{empresa_sel[:25]}_detalle")
         df_grp.to_excel(writer, index=False, sheet_name=f"{empresa_sel[:25]}_agrupado")
-        df_out_raw.drop(columns=["_tipo"], errors="ignore").to_excel(writer, index=False, sheet_name=f"{empresa_sel[:25]}_reporte")
         if not df_no_mapeadas.empty:
             df_no_mapeadas.to_excel(writer, index=False, sheet_name="No_mapeadas")
 
@@ -468,14 +547,11 @@ if selected == "BALANCE GENERAL":
 
 elif selected == "BALANCE POR EMPRESA":
     tabla_balance_general_acumulado()
-    
-elif selected == "COMPARATIVO":
-    st.subheader("Comparativo")
-    st.info("⚠️ Esta sección está en desarrollo.")
 
 
 
    
+
 
 
 
