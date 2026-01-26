@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 from io import BytesIO
 from functools import reduce
+import numpy as np
 from streamlit_option_menu import option_menu
 
 st.set_page_config(
@@ -26,13 +27,13 @@ st.markdown(
 
 
 EMPRESAS = ["HOLDING", "FWD", "WH", "UBIKARGA", "EHM", "RESA", "GREEN"]
-COLUMNAS_CUENTA = ["Cuenta","Descripción"]
+COLUMNAS_CUENTA = ["Descripción"]
 NUMERO_CUENTA = ["Cuenta"]
 COLUMNAS_MONTO = ["Saldo final", "Saldo"]
 CLASIFICACIONES_PRINCIPALES = ["ACTIVO", "PASIVO", "CAPITAL"]
 
 balance_url = st.secrets["urls"]["balance_url"]
-balance_ly = st.secrets["urls"]["balance_ly"]
+balance_ly = st.secrets["urils"]["balance_ly"]
 mapeo_url = st.secrets["urls"]["mapeo_url"]
 info_manual_url = st.secrets["urls"]["info_manual"]  # si lo ocupas después
 
@@ -109,6 +110,28 @@ selected = option_menu(
     orientation="horizontal",
 )
 
+def autoclasificar_resultados(df_merged, col_cuenta):
+    """
+    Si no viene en mapeo:
+    400,000,000 a 499,999,999  -> RESULTADOS / INGRESO
+    >= 500,000,000             -> RESULTADOS / GASTO
+    """
+    # asegúrate que cuenta sea numérica
+    df_merged[col_cuenta] = pd.to_numeric(df_merged[col_cuenta], errors="coerce")
+
+    mask_no_map = df_merged["CLASIFICACION"].isna()
+
+    mask_ing = mask_no_map & (df_merged[col_cuenta] >= 400_000_000) & (df_merged[col_cuenta] < 500_000_000)
+    mask_gas = mask_no_map & (df_merged[col_cuenta] >= 500_000_000)
+
+    df_merged.loc[mask_ing, "CLASIFICACION"] = "RESULTADOS"
+    df_merged.loc[mask_ing, "CATEGORIA"] = "INGRESO"
+
+    df_merged.loc[mask_gas, "CLASIFICACION"] = "RESULTADOS"
+    df_merged.loc[mask_gas, "CATEGORIA"] = "GASTO"
+
+    return df_merged
+
 
 def tabla_balance_por_empresa():
     st.subheader("Balance General por Empresa")
@@ -143,7 +166,10 @@ def tabla_balance_por_empresa():
             right_on="Cuenta",
             how="left",
         )
-        no_mapeadas = df_merged[df_merged["CLASIFICACION"].isna()].copy()
+        df_merged = autoclasificar_resultados(df_merged, col_cuenta)
+
+        no_mapeadas = df_merged[df_merged["CLASIFICACION"].isna()].copy()  # ya sin ingresos/gastos
+
         if not no_mapeadas.empty:
             no_mapeadas["EMPRESA"] = empresa
             cuentas_no_mapeadas.append(no_mapeadas[[col_cuenta, col_monto, "EMPRESA"]].rename(columns={col_cuenta: "Cuenta"}))
@@ -153,8 +179,13 @@ def tabla_balance_por_empresa():
             st.warning(f"⚠️ {empresa}: sin coincidencias con el mapeo.")
             continue
 
+        df_balance = df_merged[df_merged["CLASIFICACION"].isin(["ACTIVO", "PASIVO", "CAPITAL"])].copy()
+        if df_balance.empty:
+            st.warning(f"⚠️ {empresa}: sin coincidencias para BALANCE (ACTIVO/PASIVO/CAPITAL).")
+            continue
+
         resumen = (
-            df_merged.groupby(["CLASIFICACION", "CATEGORIA"])[col_monto]
+            df_balance.groupby(["CLASIFICACION", "CATEGORIA"])[col_monto]
             .sum()
             .reset_index()
             .rename(columns={col_monto: empresa})
@@ -420,8 +451,6 @@ def tabla_balance_general_acumulado():
     df_base = df_grp.merge(df_grp_ly, on=["CLASIFICACION", "CATEGORIA"], how="outer")
     df_base["MONTO"] = pd.to_numeric(df_base["MONTO"], errors="coerce").fillna(0.0)
     df_base["MONTO_LY"] = pd.to_numeric(df_base["MONTO_LY"], errors="coerce").fillna(0.0)
-
-    # % variación: (Actual / LY) - 1  (si LY=0 -> vacío)
     df_base["% VARIACION"] = np.where(
         df_base["MONTO_LY"].abs() > 1e-9,
         (df_base["MONTO"] / df_base["MONTO_LY"]) - 1.0,
@@ -437,21 +466,16 @@ def tabla_balance_general_acumulado():
 
         total_act = float(sub["MONTO"].sum()) if not sub.empty else 0.0
         total_ly  = float(sub["MONTO_LY"].sum()) if not sub.empty else 0.0
-
         totales[clasif] = total_act
         totales_ly[clasif] = total_ly
 
-        # Header / total sección
         rows.append({
             "SECCION": clasif,
             "CUENTA": "",
             "MONTO": total_act,
             "MONTO_LY": total_ly,
-            "% VARIACION": (total_act / total_ly - 1.0) if abs(total_ly) > 1e-9 else np.nan,
-            "_tipo": "header"
+            "% VARIACION": (total_act / total_ly - 1.0) if abs(total_ly) > 1e-9 else np.nan
         })
-
-        # Detalle categorías
         if not sub.empty:
             sub = sub.sort_values("CATEGORIA")
             for _, r in sub.iterrows():
@@ -460,14 +484,10 @@ def tabla_balance_general_acumulado():
                     "CUENTA": str(r["CATEGORIA"]),
                     "MONTO": float(r["MONTO"]),
                     "MONTO_LY": float(r["MONTO_LY"]),
-                    "% VARIACION": float(r["% VARIACION"]) if pd.notna(r["% VARIACION"]) else np.nan,
-                    "_tipo": "detail"
+                    "% VARIACION": float(r["% VARIACION"]) if pd.notna(r["% VARIACION"]) else np.nan
                 })
 
-        # Línea en blanco
         rows.append({"SECCION": "", "CUENTA": "", "MONTO": None, "MONTO_LY": None, "% VARIACION": None, "_tipo": "blank"})
-
-    # Diferencia (balance)
     dif = float(totales.get("ACTIVO", 0.0) + (totales.get("PASIVO", 0.0) + totales.get("CAPITAL", 0.0)))
     dif_ly = float(totales_ly.get("ACTIVO", 0.0) + (totales_ly.get("PASIVO", 0.0) + totales_ly.get("CAPITAL", 0.0)))
 
@@ -476,8 +496,7 @@ def tabla_balance_general_acumulado():
         "CUENTA": "DIFERENCIA",
         "MONTO": dif,
         "MONTO_LY": dif_ly,
-        "% VARIACION": (dif / dif_ly - 1.0) if abs(dif_ly) > 1e-9 else np.nan,
-        "_tipo": "header"
+        "% VARIACION": (dif / dif_ly - 1.0) if abs(dif_ly) > 1e-9 else np.nan
     })
 
     df_out_raw = pd.DataFrame(rows)
@@ -551,6 +570,7 @@ elif selected == "BALANCE POR EMPRESA":
 
 
    
+
 
 
 
