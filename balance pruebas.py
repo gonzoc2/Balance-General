@@ -5,6 +5,7 @@ from io import BytesIO
 from functools import reduce
 import numpy as np
 from streamlit_option_menu import option_menu
+import re
 
 st.set_page_config(
     page_title="Balance General",
@@ -584,6 +585,7 @@ elif selected == "BALANCE POR EMPRESA":
 
 
    
+
 
 
 
