@@ -45,9 +45,23 @@ with st.sidebar:
         st.rerun()
 
 def limpiar_cuenta(x):
-    """Limpia valores numéricos de la columna 'Cuenta'"""
+    """Convierte cuenta a int, quitando comas/espacios/texto (ej: '400,000,006' -> 400000006)."""
+    if pd.isna(x):
+        return pd.NA
+    s = str(x).strip()
+
+    # quita .0 típico de Excel
+    if s.endswith(".0"):
+        s = s[:-2]
+
+    # deja solo dígitos (y signo si existiera)
+    s = re.sub(r"[^\d-]", "", s)
+
+    if s == "" or s == "-":
+        return pd.NA
+
     try:
-        return int(str(x).strip().replace(".0", ""))
+        return int(s)
     except:
         return pd.NA
 
@@ -570,6 +584,7 @@ elif selected == "BALANCE POR EMPRESA":
 
 
    
+
 
 
 
