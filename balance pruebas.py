@@ -27,7 +27,7 @@ st.markdown(
 
 
 EMPRESAS = ["HOLDING", "FWD", "WH", "UBIKARGA", "EHM", "RESA", "GREEN"]
-COLUMNAS_CUENTA = ["Descripción"]
+COLUMNAS_CUENTA = ["Cuenta", "Descripción"]
 NUMERO_CUENTA = ["Cuenta"]
 COLUMNAS_MONTO = ["Saldo final", "Saldo"]
 CLASIFICACIONES_PRINCIPALES = ["ACTIVO", "PASIVO", "CAPITAL"]
@@ -570,6 +570,7 @@ elif selected == "BALANCE POR EMPRESA":
 
 
    
+
 
 
 
