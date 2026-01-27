@@ -315,9 +315,8 @@ def tabla_balance_por_empresa():
         for c in CLASIFICACIONES_PRINCIPALES
     }
 
-    # TOTAL CAPITAL = utilidad del Estado de Resultados (si existe)
     if utilidad_por_empresa:
-        totales["CAPITAL"] = float(utilidad_total)
+        totales["CAPITAL"] = float(utilidad_total) + totales["CAPITAL"]
 
     diferencia = totales["ACTIVO"] + (totales["PASIVO"] + totales["CAPITAL"])
     resumen_final = pd.DataFrame({
@@ -552,6 +551,10 @@ def tabla_balance_general_acumulado():
                 })
 
         rows.append({"SECCION": "", "CUENTA": "", "MONTO": None, "MONTO_LY": None, "% VARIACION": None})
+        
+    totales ["CAPITAL"] = float(df_resultados["UTILIDAD"]) + totales ("CAPITAL")   
+    totales_ly ["CAPITAL"] = float(df_resultados["UTILIDAD"]) + totales_ly ("CAPITAL")
+
     dif = float(totales.get("ACTIVO", 0.0) + (totales.get("PASIVO", 0.0) + totales.get("CAPITAL", 0.0)))
     dif_ly = float(totales_ly.get("ACTIVO", 0.0) + (totales_ly.get("PASIVO", 0.0) + totales_ly.get("CAPITAL", 0.0)))
 
@@ -643,8 +646,22 @@ def tabla_estado_resultados():
         st.stop()
 
     df_map = df_mapeo_local.copy()
-    df_map["CLASIFICACION_A"] = df_map["CLASIFICACION_A"].astype(str).str.upper().str.strip()
-    df_map["CATEGORIA_A"] = df_map["CATEGORIA_A"].astype(str).str.strip()
+
+    df_map["CLASIFICACION_A"] = (
+        df_map["CLASIFICACION_A"]
+        .astype("string")
+        .str.upper()
+        .str.strip()
+    )
+
+    df_map["CATEGORIA_A"] = (
+        df_map["CATEGORIA_A"]
+        .astype("string")
+        .str.strip()
+    )
+
+    df_map = df_map.dropna(subset=["CLASIFICACION_A", "CATEGORIA_A"])
+    df_map = df_map[(df_map["CLASIFICACION_A"] != "") & (df_map["CATEGORIA_A"] != "")]
 
     data_2025 = cargar_balance_multi_hojas(balance_url, [empresa_sel])
     data_2024 = cargar_balance_multi_hojas(balance_ly,  [empresa_sel])
@@ -710,11 +727,8 @@ def tabla_estado_resultados():
     ing_25, ing_24 = tot("INGRESO")
     coss_25, coss_24 = tot("COSS")
     gadm_25, gadm_24 = tot("G.ADMN") 
-
     coss_25, coss_24 = tot("COSS")
     gadm_25, gadm_24 = tot("G.ADMN")
-
-
     otros_ing_25, otros_ing_24 = tot("OTROS INGRESOS", "OTROS INGRESO", "OTROS INGRESOS/EGRESOS")
 
     gasto_fin_25, gasto_fin_24 = tot("GASTO FIN", "GASTO FINANCIERO")
@@ -745,24 +759,19 @@ def tabla_estado_resultados():
         ("COSS", coss_25, coss_24, "money"),
         ("UTILIDAD BRUTA", ub_25, ub_24, "money_bold"),
         ("% UB", (ub_25/ing_25 if abs(ing_25)>1e-9 else None), (ub_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
-
         ("G.ADMN", gadm_25, gadm_24, "money"),
         ("UTILIDAD OPERATIVA", uo_25, uo_24, "money_bold"),
         ("%UO", (uo_25/ing_25 if abs(ing_25)>1e-9 else None), (uo_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
-
         ("OTROS INGRESOS", otros_ing_25, otros_ing_24, "money"),
         ("EBIT", ebit_25, ebit_24, "money_bold"),
         ("% EBIT", (ebit_25/ing_25 if abs(ing_25)>1e-9 else None), (ebit_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
-
         ("GASTO FIN", gasto_fin_25, gasto_fin_24, "money"),
         ("INGRESO FIN", ingreso_fin_25, ingreso_fin_24, "money"),
         ("EBT", ebt_25, ebt_24, "money_bold"),
         ("% EBT", (ebt_25/ing_25 if abs(ing_25)>1e-9 else None), (ebt_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
-
         ("IMPUESTOS", imp_25, imp_24, "money"),
         ("Utilidad D.Imp.", udi_25, udi_24, "money_bold"),
         ("%UDI", (udi_25/ing_25 if abs(ing_25)>1e-9 else None), (udi_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
-
         ("EBITDA", ebitda_25, ebitda_24, "money_bold"),
     ]
 
@@ -783,7 +792,6 @@ def tabla_estado_resultados():
     df_show.loc[~is_pct, "2025"] = df_show.loc[~is_pct, "2025"].apply(fmt_money)
     df_show.loc[~is_pct, "2024"] = df_show.loc[~is_pct, "2024"].apply(fmt_money)
     df_show.loc[~is_pct, "% CAMBIO"] = df_show.loc[~is_pct, "% CAMBIO"].apply(lambda x: "" if x is None else f"{x*100:,.0f}%")
-
     df_show.loc[is_pct, "2025"] = df_show.loc[is_pct, "2025"].apply(fmt_pct)
     df_show.loc[is_pct, "2024"] = df_show.loc[is_pct, "2024"].apply(fmt_pct)
     df_show.loc[is_pct, "% CAMBIO"] = ""
@@ -805,7 +813,7 @@ def tabla_estado_resultados():
     )
 
     st.markdown("---")
-    st.markdown("### Detalle por Categoría (CATEGORIA_A)")
+    st.markdown("### Detalle por Categoría")
 
     if df_pl["CATEGORIA_A"].astype(str).str.strip().replace("nan", "").eq("").all():
         st.info("No hay CATEGORIA_A en el mapeo para mostrar desglose.")
@@ -819,11 +827,22 @@ def tabla_estado_resultados():
     ORDEN_SECCIONES = [
         "INGRESO",
         "COSS",
+        "UTILIDAD BRUTA"
+        "% UB",
         "G.ADMN",
+        "UTILIDA OPERATIVA",
+        "%UO",
         "OTROS INGRESOS",
+        "EBIT",
+        "%EBIT",
         "GASTO FIN",
         "INGRESO FIN",
+        "EBT"
+        "%EBT"
         "IMPUESTOS",
+        "Utlidad D. Imp",
+        "%UDI",
+        "EBITDA"
     ]
 
     extras = [c for c in df_cat["CLASIFICACION_A"].unique().tolist() if c not in ORDEN_SECCIONES]
@@ -856,7 +875,7 @@ def tabla_estado_resultados():
                 "SECCION": "",
                 "CATEGORIA": str(r["CATEGORIA_A"]),
                 "2025": float(r["2025"]),
-                "CATEGORIA2": str(r["CATEGORIA_A"]),  # (misma etiqueta para 2024, como en imagen)
+                "CATEGORIA2": str(r["CATEGORIA_A"]),  
                 "2024": float(r["2024"]),
                 "% CAMBIO": _pct(float(r["2025"]), float(r["2024"])),
                 "_t": "detail"
@@ -910,8 +929,24 @@ def tabla_escenarios_edr():
         st.stop()
 
     df_map = df_mapeo_local.copy()
-    df_map["CLASIFICACION_A"] = df_map["CLASIFICACION_A"].astype(str).str.upper().str.strip()
-    df_map["CATEGORIA_A"] = df_map["CATEGORIA_A"].astype(str).str.strip()
+
+    df_map["CLASIFICACION_A"] = (
+        df_map["CLASIFICACION_A"]
+        .astype("string")
+        .str.upper()
+        .str.strip()
+    )
+
+    df_map["CATEGORIA_A"] = (
+        df_map["CATEGORIA_A"]
+        .astype("string")
+        .str.strip()
+    )
+
+    # 🔥 ELIMINAR DEFINITIVAMENTE LO NO MAPEADO
+    df_map = df_map.dropna(subset=["CLASIFICACION_A", "CATEGORIA_A"])
+    df_map = df_map[(df_map["CLASIFICACION_A"] != "") & (df_map["CATEGORIA_A"] != "")]
+
 
     data_2025 = cargar_balance_multi_hojas(balance_url, [empresa_sel])
     data_2024 = cargar_balance_multi_hojas(balance_ly,  [empresa_sel])
@@ -974,7 +1009,7 @@ def tabla_escenarios_edr():
     coss_25_base, coss_24_base = tot_base("COSS")
     gadm_25_base, gadm_24_base = tot_base("G.ADMN")
 
-    st.markdown("### 🎛️ Ajustes de Escenario (afecta 2025 y 2024)")
+    st.markdown("### Ajustes de Escenario ")
 
     a1, a2, a3 = st.columns(3)
     modo = a1.selectbox("Modo de ajuste", ["% sobre el total", "Monto (MXN)"], index=0, key=f"modo_edr_{empresa_sel}")
@@ -1032,13 +1067,13 @@ def tabla_escenarios_edr():
     def pct(a, b):
         return (a / b - 1.0) if abs(b) > 1e-9 else None
 
-    ing_25, ing_24 = tot("INGRESO")
+    ing_25, ing_24 = tot("INGRESO")*-1
     coss_25, coss_24 = tot("COSS")
     gadm_25, gadm_24 = tot("G.ADMN")
 
-    otros_ing_25, otros_ing_24 = tot("OTROS INGRESOS", "OTROS INGRESO", "OTROS INGRESOS/EGRESOS")
+    otros_ing_25, otros_ing_24 = tot("OTROS INGRESOS", "OTROS INGRESO")
     gasto_fin_25, gasto_fin_24 = tot("GASTO FIN", "GASTO FINANCIERO")
-    ingreso_fin_25, ingreso_fin_24 = tot("INGRESO FIN", "INGRESO FINANCIERO")
+    ingreso_fin_25, ingreso_fin_24 = tot("INGRESO FIN", "INGRESO FINANCIERO")*-1
     imp_25, imp_24 = tot("IMPUESTOS")
     dep_25, dep_24 = tot("DEPRECIACION")
     amo_25, amo_24 = tot("AMORTIZACION")
@@ -1122,7 +1157,7 @@ def tabla_escenarios_edr():
     )
 
     st.markdown("---")
-    st.markdown("### Detalle por Categoría (CATEGORIA_A)")
+    st.markdown("### Detalle por Categoría")
 
     if df_pl["CATEGORIA_A"].astype(str).str.strip().replace("nan", "").eq("").all():
         st.info("No hay CATEGORIA_A en el mapeo para mostrar desglose.")
@@ -1165,7 +1200,6 @@ def tabla_escenarios_edr():
             "CATEGORIA2": "",
             "2024": total_24,
             "% CAMBIO": _pct(total_25, total_24),
-            "_t": "header"
         })
 
         sub = sub.sort_values("CATEGORIA_A")
@@ -1177,7 +1211,6 @@ def tabla_escenarios_edr():
                 "CATEGORIA2": str(r["CATEGORIA_A"]),
                 "2024": float(r["2024"]),
                 "% CAMBIO": _pct(float(r["2025"]), float(r["2024"])),
-                "_t": "detail"
             })
 
     df_det = pd.DataFrame(rows)
@@ -1403,8 +1436,12 @@ def tabla_escenarios_balance():
                     "MONTO_LY": float(r["MONTO_LY"]),
                     "% VARIACION": float(r["% VARIACION"]) if pd.notna(r["% VARIACION"]) else np.nan
                 })
-
         rows.append({"SECCION": "", "CUENTA": "", "MONTO": None, "MONTO_LY": None, "% VARIACION": None})
+
+
+    totales["CAPITAL"] = df_resultados ["UTILIDAD"] + totales ("CAPITAL")
+    totales_ly["CAPITAL"] = df_resultados ["UTILIDAD"] + totales ("CAPITAL")
+
     dif = float(totales.get("ACTIVO", 0.0) + (totales.get("PASIVO", 0.0) + totales.get("CAPITAL", 0.0)))
     dif_ly = float(totales_ly.get("ACTIVO", 0.0) + (totales_ly.get("PASIVO", 0.0) + totales_ly.get("CAPITAL", 0.0)))
 
@@ -1498,7 +1535,9 @@ elif selected == "ESCENARIOS BALANCE":
 
 
 
+
    
+
 
 
 
