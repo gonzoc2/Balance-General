@@ -36,7 +36,7 @@ CLASIFICACIONES_PRINCIPALES = ["ACTIVO", "PASIVO", "CAPITAL"]
 balance_url = st.secrets["urls"]["balance_url"]
 balance_ly = st.secrets["urls"]["balance_ly"]
 mapeo_url = st.secrets["urls"]["mapeo_url"]
-info_manual_url = st.secrets["urls"]["info_manual"]  # si lo ocupas después
+info_manual_url = st.secrets["urls"]["info_manual"]  
 
 with st.sidebar:
     st.title("Controles")
@@ -50,12 +50,9 @@ def limpiar_cuenta(x):
     if pd.isna(x):
         return pd.NA
     s = str(x).strip()
-
-    # quita .0 típico de Excel
     if s.endswith(".0"):
         s = s[:-2]
 
-    # deja solo dígitos (y signo si existiera)
     s = re.sub(r"[^\d-]", "", s)
 
     if s == "" or s == "-":
@@ -65,6 +62,7 @@ def limpiar_cuenta(x):
         return int(s)
     except:
         return pd.NA
+
 
 def _encontrar_columna(df, candidatos):
     return next((c for c in candidatos if c in df.columns), None)
@@ -113,8 +111,8 @@ def cargar_balance_multi_hojas(url: str, hojas: list[str]) -> dict[str, pd.DataF
 
 
 OPTIONS = [
-    "BALANCE GENERAL", #balance general
-    "BALANCE POR EMPRESA", 
+    "BALANCE GENERAL",
+    "BALANCE POR EMPRESA", "ESTADO DE RESULTADOS", "ESCENARIOS EDR", "ESCENARIOS BALANCE"
 ]
 
 selected = option_menu(
@@ -136,8 +134,8 @@ def autoclasificar_resultados(df_merged, col_cuenta):
 
     mask_no_map = df_merged["CLASIFICACION"].isna()
 
-    mask_ing = mask_no_map & (df_merged[col_cuenta] >= 400_000_000) & (df_merged[col_cuenta] < 500_000_000)
-    mask_gas = mask_no_map & (df_merged[col_cuenta] >= 500_000_000)
+    mask_ing = mask_no_map & (df_merged[col_cuenta] >= 400000000) & (df_merged[col_cuenta] < 500000000)
+    mask_gas = mask_no_map & (df_merged[col_cuenta] >= 500000000)
 
     df_merged.loc[mask_ing, "CLASIFICACION"] = "RESULTADOS"
     df_merged.loc[mask_ing, "CATEGORIA"] = "INGRESO"
@@ -229,11 +227,11 @@ def tabla_balance_por_empresa():
         df_raw = df_raw.dropna(subset=[col_cuenta_raw])
         df_cta = df_raw.groupby(col_cuenta_raw, as_index=False)[col_monto_raw].sum()
         ingreso = df_cta.loc[
-            (df_cta[col_cuenta_raw] > 400_000_000) & (df_cta[col_cuenta_raw] < 500_000_000),
+            (df_cta[col_cuenta_raw] > 400000000) & (df_cta[col_cuenta_raw] < 500000000),
             col_monto_raw
         ].sum()
         gasto = df_cta.loc[
-            (df_cta[col_cuenta_raw] > 500_000_000),
+            (df_cta[col_cuenta_raw] > 500000000),
             col_monto_raw
         ].sum()
         utilidad = ingreso + gasto
@@ -264,6 +262,17 @@ def tabla_balance_por_empresa():
                 df_resultados_t[col] = df_resultados_t[col].apply(lambda x: f"${x:,.2f}")
         st.dataframe(df_resultados_t, use_container_width=True, hide_index=True)
         utilidad_total = df_resultados["UTILIDAD"].sum()
+
+    # --- utilidad por empresa (para usarla como TOTAL CAPITAL) ---
+    utilidad_por_empresa = {}
+    utilidad_total = 0.0
+
+    if not df_resultados.empty:
+        utilidad_por_empresa = df_resultados.set_index("EMPRESA")["UTILIDAD"].to_dict()
+        utilidad_total = float(df_resultados["UTILIDAD"].sum())
+
+
+
     df_final = reduce(
         lambda l, r: pd.merge(l, r, on=["CLASIFICACION", "CATEGORIA"], how="outer"),
         resultados_balance
@@ -279,9 +288,19 @@ def tabla_balance_por_empresa():
             "CLASIFICACION": [clasif],
             "CATEGORIA": [f"TOTAL {clasif}"]
         })
-        for col in EMPRESAS + ["TOTAL ACUMULADO"]:
-            subtotal[col] = df_clasif[col].sum()
+
+        if clasif == "CAPITAL" and utilidad_por_empresa:
+            # TOTAL CAPITAL = UTILIDAD (por empresa)
+            for emp in EMPRESAS:
+                subtotal[emp] = float(utilidad_por_empresa.get(emp, 0.0))
+            subtotal["TOTAL ACUMULADO"] = float(utilidad_total)
+        else:
+            # resto igual: suma normal por clasificación
+            for col in EMPRESAS + ["TOTAL ACUMULADO"]:
+                subtotal[col] = df_clasif[col].sum()
+
         df_clasif = pd.concat([df_clasif, subtotal], ignore_index=True)
+
         for col in EMPRESAS + ["TOTAL ACUMULADO"]:
             df_clasif[col] = df_clasif[col].apply(lambda x: f"${x:,.2f}")
         with st.expander(f"{clasif}", expanded=(clasif == "CAPITAL")):
@@ -295,6 +314,11 @@ def tabla_balance_por_empresa():
         c: df_final[df_final["CLASIFICACION"] == c]["TOTAL ACUMULADO"].sum()
         for c in CLASIFICACIONES_PRINCIPALES
     }
+
+    # TOTAL CAPITAL = utilidad del Estado de Resultados (si existe)
+    if utilidad_por_empresa:
+        totales["CAPITAL"] = float(utilidad_total)
+
     diferencia = totales["ACTIVO"] + (totales["PASIVO"] + totales["CAPITAL"])
     resumen_final = pd.DataFrame({
         "Concepto": ["TOTAL ACTIVO", "TOTAL PASIVO", "TOTAL CAPITAL", "DIFERENCIA"],
@@ -336,16 +360,28 @@ def tabla_balance_por_empresa():
 
 def tabla_balance_general_acumulado():
     col1, col2 = st.columns([1, 1])
-    empresa_sel = col1.selectbox("Empresa", EMPRESAS, index=0)
+
+    OPCIONES_EMPRESA = ["ACUMULADO"] + EMPRESAS
+    empresa_sel = col1.selectbox("Empresa", OPCIONES_EMPRESA, index=0)
 
     df_mapeo_local = cargar_mapeo(mapeo_url)
     if df_mapeo_local.empty:
         st.stop()
 
-    data_empresas = cargar_balance_multi_hojas(balance_url, [empresa_sel])
-    data_empresas_ly = cargar_balance_multi_hojas(balance_ly, [empresa_sel])    
-    df_emp = data_empresas.get(empresa_sel, pd.DataFrame()).copy()
-    df_emp_ly = data_empresas_ly.get(empresa_sel, pd.DataFrame()).copy()
+    if empresa_sel == "ACUMULADO":
+        empresas_cargar = EMPRESAS[:] 
+    else:
+        empresas_cargar = [empresa_sel]
+    data_empresas = cargar_balance_multi_hojas(balance_url, empresas_cargar)
+    data_empresas_ly = cargar_balance_multi_hojas(balance_ly, empresas_cargar)
+    if empresa_sel == "ACUMULADO":
+        dfs_act = [data_empresas.get(e, pd.DataFrame()).copy() for e in empresas_cargar]
+        dfs_ly  = [data_empresas_ly.get(e, pd.DataFrame()).copy() for e in empresas_cargar]
+        df_emp = pd.concat([d for d in dfs_act if not d.empty], ignore_index=True) if any([not d.empty for d in dfs_act]) else pd.DataFrame()
+        df_emp_ly = pd.concat([d for d in dfs_ly if not d.empty], ignore_index=True) if any([not d.empty for d in dfs_ly]) else pd.DataFrame()
+    else:
+        df_emp = data_empresas.get(empresa_sel, pd.DataFrame()).copy()
+        df_emp_ly = data_empresas_ly.get(empresa_sel, pd.DataFrame()).copy()
 
     if df_emp.empty:
         st.warning(f"⚠️ No hay datos para {empresa_sel}.")
@@ -359,6 +395,7 @@ def tabla_balance_general_acumulado():
     if not col_cuenta or not col_monto:
         st.error(f"❌ {empresa_sel}: columnas inválidas")
         st.stop()
+
 
     data_resultados = []
     for empresa in EMPRESAS:
@@ -379,12 +416,12 @@ def tabla_balance_general_acumulado():
         df_cta = df_raw.groupby(col_cuenta_raw, as_index=False)[col_monto_raw].sum()
 
         ingreso = df_cta.loc[
-            (df_cta[col_cuenta_raw] > 400_000_000) & (df_cta[col_cuenta_raw] < 500_000_000),
+            (df_cta[col_cuenta_raw] > 400000000) & (df_cta[col_cuenta_raw] < 500000000),
             col_monto_raw
         ].sum()
 
         gasto = df_cta.loc[
-            (df_cta[col_cuenta_raw] > 500_000_000),
+            (df_cta[col_cuenta_raw] > 500000000),
             col_monto_raw
         ].sum()
 
@@ -398,7 +435,19 @@ def tabla_balance_general_acumulado():
         })
 
     df_resultados = pd.DataFrame(data_resultados)
+
+    if empresa_sel == "ACUMULADO" and not df_resultados.empty:
+        df_total = pd.DataFrame([{
+            "EMPRESA": "TOTAL",
+            "INGRESO": float(df_resultados["INGRESO"].sum()),
+            "GASTO": float(df_resultados["GASTO"].sum()),
+            "UTILIDAD": float(df_resultados["UTILIDAD"].sum()),
+        }])
+        df_resultados = pd.concat([df_resultados, df_total], ignore_index=True)
+
     st.markdown("### Estado de Resultados por Empresa")
+    st.dataframe(df_resultados, use_container_width=True, hide_index=True)
+
 
     df_emp[col_cuenta] = df_emp[col_cuenta].apply(limpiar_cuenta)
     df_emp[col_monto] = _to_numeric_money(df_emp[col_monto])
@@ -502,7 +551,7 @@ def tabla_balance_general_acumulado():
                     "% VARIACION": float(r["% VARIACION"]) if pd.notna(r["% VARIACION"]) else np.nan
                 })
 
-        rows.append({"SECCION": "", "CUENTA": "", "MONTO": None, "MONTO_LY": None, "% VARIACION": None, "_tipo": "blank"})
+        rows.append({"SECCION": "", "CUENTA": "", "MONTO": None, "MONTO_LY": None, "% VARIACION": None})
     dif = float(totales.get("ACTIVO", 0.0) + (totales.get("PASIVO", 0.0) + totales.get("CAPITAL", 0.0)))
     dif_ly = float(totales_ly.get("ACTIVO", 0.0) + (totales_ly.get("PASIVO", 0.0) + totales_ly.get("CAPITAL", 0.0)))
 
@@ -531,7 +580,7 @@ def tabla_balance_general_acumulado():
     df_out_show["% VARIACION"] = df_out_show["% VARIACION"].apply(fmt_pct)
 
     def estilo_reporte(row):
-        t = row.get("_tipo", "")
+        t = row.get("")
         if t == "header":
             return ["font-weight:700; border-top:2px solid #999; border-bottom:1px solid #999;"] * len(row)
         if t == "blank":
@@ -540,15 +589,14 @@ def tabla_balance_general_acumulado():
 
     st.markdown(f"### {empresa_sel}")
     st.dataframe(
-        df_out_show[["SECCION", "CUENTA", "MONTO", "MONTO_LY", "% VARIACION", "_tipo"]]
+        df_out_show[["SECCION", "CUENTA", "MONTO", "MONTO_LY", "% VARIACION"]]
             .style
             .apply(estilo_reporte, axis=1)
-            .hide(axis="columns", subset=["_tipo"]),
+            .hide(axis="columns"),
         use_container_width=True,
         hide_index=True
     )
 
-    # Mensaje de cuadre (con dif actual)
     if abs(dif) < 1:
         st.success("✅ El balance está cuadrado")
     else:
@@ -567,6 +615,9 @@ def tabla_balance_general_acumulado():
         df_grp.to_excel(writer, index=False, sheet_name=f"{empresa_sel[:25]}_agrupado")
         if not df_no_mapeadas.empty:
             df_no_mapeadas.to_excel(writer, index=False, sheet_name="No_mapeadas")
+    st.markdown(f"### {empresa_sel}")
+
+    nombre_archivo = "Balance_Acumulado_TODAS.xlsx" if empresa_sel == "ACUMULADO" else f"Balance_Acumulado_{empresa_sel}.xlsx"
 
     st.download_button(
         label=f"💾 Descargar Excel ({empresa_sel})",
@@ -576,15 +627,879 @@ def tabla_balance_general_acumulado():
         use_container_width=True
     )
 
+def tabla_estado_resultados():
+    st.subheader("Estado de Resultados")
+
+    col1, col2 = st.columns([1, 1])
+    empresa_sel = col1.selectbox("Empresa", EMPRESAS, index=0)
+
+    df_mapeo_local = cargar_mapeo(mapeo_url)
+    if df_mapeo_local.empty:
+        st.stop()
+
+    req = {"Cuenta", "CLASIFICACION_A", "CATEGORIA_A"}
+    if not req.issubset(df_mapeo_local.columns):
+        st.error(f"❌ Al mapeo le faltan columnas: {req - set(df_mapeo_local.columns)}")
+        st.stop()
+
+    df_map = df_mapeo_local.copy()
+    df_map["CLASIFICACION_A"] = df_map["CLASIFICACION_A"].astype(str).str.upper().str.strip()
+    df_map["CATEGORIA_A"] = df_map["CATEGORIA_A"].astype(str).str.strip()
+
+    data_2025 = cargar_balance_multi_hojas(balance_url, [empresa_sel])
+    data_2024 = cargar_balance_multi_hojas(balance_ly,  [empresa_sel])
+
+    df_25_raw = data_2025.get(empresa_sel, pd.DataFrame()).copy()
+    df_24_raw = data_2024.get(empresa_sel, pd.DataFrame()).copy()
+
+    if df_25_raw.empty:
+        st.warning(f"⚠️ No hay datos 2025 para {empresa_sel}.")
+        st.stop()
+    if df_24_raw.empty:
+        st.warning(f"⚠️ No hay datos 2024 para {empresa_sel}.")
+        st.stop()
+
+    col_cta_25 = _encontrar_columna(df_25_raw, NUMERO_CUENTA) or _encontrar_columna(df_25_raw, COLUMNAS_CUENTA)
+    col_amt_25 = _encontrar_columna(df_25_raw, COLUMNAS_MONTO)
+
+    col_cta_24 = _encontrar_columna(df_24_raw, NUMERO_CUENTA) or _encontrar_columna(df_24_raw, COLUMNAS_CUENTA)
+    col_amt_24 = _encontrar_columna(df_24_raw, COLUMNAS_MONTO)
+
+    if not col_cta_25 or not col_amt_25:
+        st.error("❌ 2025: columnas inválidas (Cuenta/Saldo).")
+        st.stop()
+    if not col_cta_24 or not col_amt_24:
+        st.error("❌ 2024: columnas inválidas (Cuenta/Saldo).")
+        st.stop()
+
+    def prep(df_raw, col_cta, col_amt, nombre_monto):
+        df = df_raw.copy()
+        df[col_cta] = df[col_cta].apply(limpiar_cuenta)
+        df[col_amt] = _to_numeric_money(df[col_amt])
+        df = df.dropna(subset=[col_cta])
+        df = df.groupby(col_cta, as_index=False)[col_amt].sum()
+        df = df.rename(columns={col_cta: "Cuenta", col_amt: nombre_monto})
+        return df
+
+    df_25 = prep(df_25_raw, col_cta_25, col_amt_25, "2025")
+    df_24 = prep(df_24_raw, col_cta_24, col_amt_24, "2024")
+
+    df_cta = df_25.merge(df_24, on="Cuenta", how="outer").fillna(0.0)
+    df_pl = df_cta.merge(
+        df_map[["Cuenta", "CLASIFICACION_A", "CATEGORIA_A"]],
+        on="Cuenta",
+        how="inner"
+    )
+
+    if df_pl.empty:
+        st.warning("⚠️ No hay cuentas mapeadas a CLASIFICACION_A para esta empresa.")
+        st.stop()
+    df_tot = df_pl.groupby("CLASIFICACION_A", as_index=False)[["2025", "2024"]].sum()
+
+    def tot(*nombres):
+        """Suma total por una o varias CLASIFICACION_A (case-insensitive)."""
+        if len(nombres) == 1 and isinstance(nombres[0], (list, tuple, set)):
+            nombres = tuple(nombres[0])
+        claves = [str(x).upper().strip() for x in nombres]
+        sub = df_tot[df_tot["CLASIFICACION_A"].isin(claves)]
+        return float(sub["2025"].sum()), float(sub["2024"].sum())
+
+    def pct(a, b):
+        return (a / b - 1.0) if abs(b) > 1e-9 else None
+
+    ing_25, ing_24 = tot("INGRESO")
+    coss_25, coss_24 = tot("COSS")
+    gadm_25, gadm_24 = tot("G.ADMN") 
+
+    coss_25, coss_24 = tot("COSS")
+    gadm_25, gadm_24 = tot("G.ADMN")
+
+
+    otros_ing_25, otros_ing_24 = tot("OTROS INGRESOS", "OTROS INGRESO", "OTROS INGRESOS/EGRESOS")
+
+    gasto_fin_25, gasto_fin_24 = tot("GASTO FIN", "GASTO FINANCIERO")
+    ingreso_fin_25, ingreso_fin_24 = tot("INGRESO FIN", "INGRESO FINANCIERO")
+
+    imp_25, imp_24 = tot("IMPUESTOS")
+    dep_25, dep_24 = tot("DEPRECIACION")
+    amo_25, amo_24 = tot("AMORTIZACION")
+    ub_25 = ing_25 - coss_25
+    ub_24 = ing_24 - coss_24
+
+    uo_25 = ub_25 - gadm_25
+    uo_24 = ub_24 - gadm_24
+
+    ebit_25 = uo_25 + otros_ing_25
+    ebit_24 = uo_24 + otros_ing_24
+    ebt_25 = ebit_25 - gasto_fin_25 + ingreso_fin_25
+    ebt_24 = ebit_24 - gasto_fin_24 + ingreso_fin_24
+
+    udi_25 = ebt_25 - imp_25
+    udi_24 = ebt_24 - imp_24
+
+    ebitda_25 = ebit_25 + dep_25 + amo_25
+    ebitda_24 = ebit_24 + dep_24 + amo_24
+
+    panel = [
+        ("INGRESO", ing_25, ing_24, "money"),
+        ("COSS", coss_25, coss_24, "money"),
+        ("UTILIDAD BRUTA", ub_25, ub_24, "money_bold"),
+        ("% UB", (ub_25/ing_25 if abs(ing_25)>1e-9 else None), (ub_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+
+        ("G.ADMN", gadm_25, gadm_24, "money"),
+        ("UTILIDAD OPERATIVA", uo_25, uo_24, "money_bold"),
+        ("%UO", (uo_25/ing_25 if abs(ing_25)>1e-9 else None), (uo_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+
+        ("OTROS INGRESOS", otros_ing_25, otros_ing_24, "money"),
+        ("EBIT", ebit_25, ebit_24, "money_bold"),
+        ("% EBIT", (ebit_25/ing_25 if abs(ing_25)>1e-9 else None), (ebit_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+
+        ("GASTO FIN", gasto_fin_25, gasto_fin_24, "money"),
+        ("INGRESO FIN", ingreso_fin_25, ingreso_fin_24, "money"),
+        ("EBT", ebt_25, ebt_24, "money_bold"),
+        ("% EBT", (ebt_25/ing_25 if abs(ing_25)>1e-9 else None), (ebt_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+
+        ("IMPUESTOS", imp_25, imp_24, "money"),
+        ("Utilidad D.Imp.", udi_25, udi_24, "money_bold"),
+        ("%UDI", (udi_25/ing_25 if abs(ing_25)>1e-9 else None), (udi_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+
+        ("EBITDA", ebitda_25, ebitda_24, "money_bold"),
+    ]
+
+    df_panel = pd.DataFrame(panel, columns=["CONCEPTO", "2025", "2024", "_fmt"])
+    df_panel["% CAMBIO"] = df_panel.apply(lambda r: pct(r["2025"], r["2024"]) if r["_fmt"] != "pct" else None, axis=1)
+
+    def fmt_money(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)): return ""
+        return f"$ {float(v):,.0f}"
+
+    def fmt_pct(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)): return ""
+        return f"{float(v)*100:,.2f}%"
+
+    df_show = df_panel.copy()
+    is_pct = df_show["_fmt"].eq("pct")
+
+    df_show.loc[~is_pct, "2025"] = df_show.loc[~is_pct, "2025"].apply(fmt_money)
+    df_show.loc[~is_pct, "2024"] = df_show.loc[~is_pct, "2024"].apply(fmt_money)
+    df_show.loc[~is_pct, "% CAMBIO"] = df_show.loc[~is_pct, "% CAMBIO"].apply(lambda x: "" if x is None else f"{x*100:,.0f}%")
+
+    df_show.loc[is_pct, "2025"] = df_show.loc[is_pct, "2025"].apply(fmt_pct)
+    df_show.loc[is_pct, "2024"] = df_show.loc[is_pct, "2024"].apply(fmt_pct)
+    df_show.loc[is_pct, "% CAMBIO"] = ""
+
+    def style_panel(row):
+        concepto = str(row.get("CONCEPTO", "")).upper().strip()
+        if concepto in ["UTILIDAD BRUTA", "UTILIDAD OPERATIVA", "EBIT", "EBT", "UTILIDAD DESPUÉS DE IMP.", "EBITDA"]:
+            return ["font-weight:800; background:#f2f2f2;"] * len(row)
+        if concepto in ["INGRESO", "COSS", "G.ADMN", "OTROS INGRESOS", "GASTO FIN", "INGRESO FIN", "IMPUESTOS"]:
+            return ["font-weight:700;"] * len(row)
+        return [""] * len(row)
+
+    st.markdown(f"### {empresa_sel}  \n**Miles MXN**")
+    st.dataframe(
+        df_show[["CONCEPTO", "2025", "2024", "% CAMBIO"]]
+          .style.apply(style_panel, axis=1),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.markdown("---")
+    st.markdown("### Detalle por Categoría (CATEGORIA_A)")
+
+    if df_pl["CATEGORIA_A"].astype(str).str.strip().replace("nan", "").eq("").all():
+        st.info("No hay CATEGORIA_A en el mapeo para mostrar desglose.")
+        return
+
+    df_cat = (
+        df_pl.groupby(["CLASIFICACION_A", "CATEGORIA_A"], as_index=False)[["2025", "2024"]]
+        .sum()
+    )
+
+    ORDEN_SECCIONES = [
+        "INGRESO",
+        "COSS",
+        "G.ADMN",
+        "OTROS INGRESOS",
+        "GASTO FIN",
+        "INGRESO FIN",
+        "IMPUESTOS",
+    ]
+
+    extras = [c for c in df_cat["CLASIFICACION_A"].unique().tolist() if c not in ORDEN_SECCIONES]
+    ORDEN_FINAL = [c for c in ORDEN_SECCIONES if c in df_cat["CLASIFICACION_A"].unique()] + sorted(extras)
+
+    def _pct(a, b):
+        return (a / b - 1.0) if abs(b) > 1e-9 else np.nan
+
+    rows = []
+    for clasif in ORDEN_FINAL:
+        sub = df_cat[df_cat["CLASIFICACION_A"] == clasif].copy()
+        if sub.empty:
+            continue
+
+        total_25 = float(sub["2025"].sum())
+        total_24 = float(sub["2024"].sum())
+        rows.append({
+            "SECCION": clasif,
+            "CATEGORIA": "",
+            "2025": total_25,
+            "CATEGORIA2": "",
+            "2024": total_24,
+            "% CAMBIO": _pct(total_25, total_24),
+            "_t": "header"
+        })
+
+        sub = sub.sort_values("CATEGORIA_A")
+        for _, r in sub.iterrows():
+            rows.append({
+                "SECCION": "",
+                "CATEGORIA": str(r["CATEGORIA_A"]),
+                "2025": float(r["2025"]),
+                "CATEGORIA2": str(r["CATEGORIA_A"]),  # (misma etiqueta para 2024, como en imagen)
+                "2024": float(r["2024"]),
+                "% CAMBIO": _pct(float(r["2025"]), float(r["2024"])),
+                "_t": "detail"
+            })
+
+    df_det = pd.DataFrame(rows)
+
+    # Formato
+    def _fmt_money(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return f"$ {float(v):,.0f}"
+
+    def _fmt_pct(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return f"{float(v)*100:,.0f}%"
+
+    df_show2 = df_det.copy()
+    df_show2["2025"] = df_show2["2025"].apply(_fmt_money)
+    df_show2["2024"] = df_show2["2024"].apply(_fmt_money)
+    df_show2["% CAMBIO"] = df_show2["% CAMBIO"].apply(_fmt_pct)
+
+    def _style_detalle(row):
+        t = row.get("_t", "")
+        if t == "header":
+            return ["font-weight:800; background:#f2f2f2;"] * len(row)
+        return [""] * len(row)
+
+    st.dataframe(
+        df_show2[["SECCION", "CATEGORIA", "2025", "CATEGORIA2", "2024", "% CAMBIO"]]
+            .style.apply(_style_detalle, axis=1),
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+def tabla_escenarios_edr():
+    st.subheader("Escenarios Estado de Resultados")
+
+    col1, col2 = st.columns([1, 1])
+    empresa_sel = col1.selectbox("Empresa", EMPRESAS, index=0)
+
+    df_mapeo_local = cargar_mapeo(mapeo_url)
+    if df_mapeo_local.empty:
+        st.stop()
+
+    req = {"Cuenta", "CLASIFICACION_A", "CATEGORIA_A"}
+    if not req.issubset(df_mapeo_local.columns):
+        st.error(f"❌ Al mapeo le faltan columnas: {req - set(df_mapeo_local.columns)}")
+        st.stop()
+
+    df_map = df_mapeo_local.copy()
+    df_map["CLASIFICACION_A"] = df_map["CLASIFICACION_A"].astype(str).str.upper().str.strip()
+    df_map["CATEGORIA_A"] = df_map["CATEGORIA_A"].astype(str).str.strip()
+
+    data_2025 = cargar_balance_multi_hojas(balance_url, [empresa_sel])
+    data_2024 = cargar_balance_multi_hojas(balance_ly,  [empresa_sel])
+
+    df_25_raw = data_2025.get(empresa_sel, pd.DataFrame()).copy()
+    df_24_raw = data_2024.get(empresa_sel, pd.DataFrame()).copy()
+
+    if df_25_raw.empty:
+        st.warning(f"⚠️ No hay datos 2025 para {empresa_sel}.")
+        st.stop()
+    if df_24_raw.empty:
+        st.warning(f"⚠️ No hay datos 2024 para {empresa_sel}.")
+        st.stop()
+
+    col_cta_25 = _encontrar_columna(df_25_raw, NUMERO_CUENTA) or _encontrar_columna(df_25_raw, COLUMNAS_CUENTA)
+    col_amt_25 = _encontrar_columna(df_25_raw, COLUMNAS_MONTO)
+    col_cta_24 = _encontrar_columna(df_24_raw, NUMERO_CUENTA) or _encontrar_columna(df_24_raw, COLUMNAS_CUENTA)
+    col_amt_24 = _encontrar_columna(df_24_raw, COLUMNAS_MONTO)
+
+    if not col_cta_25 or not col_amt_25:
+        st.error("❌ 2025: columnas inválidas (Cuenta/Saldo).")
+        st.stop()
+    if not col_cta_24 or not col_amt_24:
+        st.error("❌ 2024: columnas inválidas (Cuenta/Saldo).")
+        st.stop()
+
+    def prep(df_raw, col_cta, col_amt, nombre_monto):
+        df = df_raw.copy()
+        df[col_cta] = df[col_cta].apply(limpiar_cuenta)
+        df[col_amt] = _to_numeric_money(df[col_amt])
+        df = df.dropna(subset=[col_cta])
+        df = df.groupby(col_cta, as_index=False)[col_amt].sum()
+        df = df.rename(columns={col_cta: "Cuenta", col_amt: nombre_monto})
+        return df
+
+    df_25 = prep(df_25_raw, col_cta_25, col_amt_25, "2025")
+    df_24 = prep(df_24_raw, col_cta_24, col_amt_24, "2024")
+    df_cta = df_25.merge(df_24, on="Cuenta", how="outer").fillna(0.0)
+
+    df_pl = df_cta.merge(
+        df_map[["Cuenta", "CLASIFICACION_A", "CATEGORIA_A"]],
+        on="Cuenta",
+        how="inner"
+    )
+
+    if df_pl.empty:
+        st.warning("⚠️ No hay cuentas mapeadas a CLASIFICACION_A para esta empresa.")
+        st.stop()
+
+    df_tot_base = df_pl.groupby("CLASIFICACION_A", as_index=False)[["2025", "2024"]].sum()
+
+    def tot_base(*nombres):
+        if len(nombres) == 1 and isinstance(nombres[0], (list, tuple, set)):
+            nombres = tuple(nombres[0])
+        claves = [str(x).upper().strip() for x in nombres]
+        sub = df_tot_base[df_tot_base["CLASIFICACION_A"].isin(claves)]
+        return float(sub["2025"].sum()), float(sub["2024"].sum())
+
+    ing_25_base, ing_24_base = tot_base("INGRESO")
+    coss_25_base, coss_24_base = tot_base("COSS")
+    gadm_25_base, gadm_24_base = tot_base("G.ADMN")
+
+    st.markdown("### 🎛️ Ajustes de Escenario (afecta 2025 y 2024)")
+
+    a1, a2, a3 = st.columns(3)
+    modo = a1.selectbox("Modo de ajuste", ["% sobre el total", "Monto (MXN)"], index=0, key=f"modo_edr_{empresa_sel}")
+
+    if modo == "% sobre el total":
+        adj_coss_25 = a2.slider("% COSS 2025", -50.0, 50.0, 0.0, 0.5, key=f"coss_pct_25_{empresa_sel}") / 100.0
+        adj_coss_24 = a3.slider("% COSS 2024", -50.0, 50.0, 0.0, 0.5, key=f"coss_pct_24_{empresa_sel}") / 100.0
+
+        b1, b2 = st.columns(2)
+        adj_gadm_25 = b1.slider("% G.ADMN 2025", -50.0, 50.0, 0.0, 0.5, key=f"gadm_pct_25_{empresa_sel}") / 100.0
+        adj_gadm_24 = b2.slider("% G.ADMN 2024", -50.0, 50.0, 0.0, 0.5, key=f"gadm_pct_24_{empresa_sel}") / 100.0
+
+        coss_25_scn = coss_25_base * (1.0 + adj_coss_25)
+        coss_24_scn = coss_24_base * (1.0 + adj_coss_24)
+
+        gadm_25_scn = gadm_25_base * (1.0 + adj_gadm_25)
+        gadm_24_scn = gadm_24_base * (1.0 + adj_gadm_24)
+    else:
+        adj_coss_m_25 = a2.number_input("Δ COSS 2025 (MXN)", value=0.0, step=1000.0, key=f"coss_m_25_{empresa_sel}")
+        adj_coss_m_24 = a3.number_input("Δ COSS 2024 (MXN)", value=0.0, step=1000.0, key=f"coss_m_24_{empresa_sel}")
+
+        b1, b2 = st.columns(2)
+        adj_gadm_m_25 = b1.number_input("Δ G.ADMN 2025 (MXN)", value=0.0, step=1000.0, key=f"gadm_m_25_{empresa_sel}")
+        adj_gadm_m_24 = b2.number_input("Δ G.ADMN 2024 (MXN)", value=0.0, step=1000.0, key=f"gadm_m_24_{empresa_sel}")
+
+        coss_25_scn = coss_25_base + adj_coss_m_25
+        coss_24_scn = coss_24_base + adj_coss_m_24
+
+        gadm_25_scn = gadm_25_base + adj_gadm_m_25
+        gadm_24_scn = gadm_24_base + adj_gadm_m_24
+
+    factor_coss_25 = (coss_25_scn / coss_25_base) if abs(coss_25_base) > 1e-9 else 1.0
+    factor_coss_24 = (coss_24_scn / coss_24_base) if abs(coss_24_base) > 1e-9 else 1.0
+
+    factor_gadm_25 = (gadm_25_scn / gadm_25_base) if abs(gadm_25_base) > 1e-9 else 1.0
+    factor_gadm_24 = (gadm_24_scn / gadm_24_base) if abs(gadm_24_base) > 1e-9 else 1.0
+    df_pl["CLASIFICACION_A"] = df_pl["CLASIFICACION_A"].astype(str).str.upper().str.strip()
+
+    mask_coss = df_pl["CLASIFICACION_A"].eq("COSS")
+    mask_gadm = df_pl["CLASIFICACION_A"].eq("G.ADMN")
+
+    df_pl.loc[mask_coss, "2025"] = df_pl.loc[mask_coss, "2025"] * factor_coss_25
+    df_pl.loc[mask_coss, "2024"] = df_pl.loc[mask_coss, "2024"] * factor_coss_24
+    df_pl.loc[mask_gadm, "2025"] = df_pl.loc[mask_gadm, "2025"] * factor_gadm_25
+    df_pl.loc[mask_gadm, "2024"] = df_pl.loc[mask_gadm, "2024"] * factor_gadm_24
+    df_tot = df_pl.groupby("CLASIFICACION_A", as_index=False)[["2025", "2024"]].sum()
+
+    def tot(*nombres):
+        if len(nombres) == 1 and isinstance(nombres[0], (list, tuple, set)):
+            nombres = tuple(nombres[0])
+        claves = [str(x).upper().strip() for x in nombres]
+        sub = df_tot[df_tot["CLASIFICACION_A"].isin(claves)]
+        return float(sub["2025"].sum()), float(sub["2024"].sum())
+
+    def pct(a, b):
+        return (a / b - 1.0) if abs(b) > 1e-9 else None
+
+    ing_25, ing_24 = tot("INGRESO")
+    coss_25, coss_24 = tot("COSS")
+    gadm_25, gadm_24 = tot("G.ADMN")
+
+    otros_ing_25, otros_ing_24 = tot("OTROS INGRESOS", "OTROS INGRESO", "OTROS INGRESOS/EGRESOS")
+    gasto_fin_25, gasto_fin_24 = tot("GASTO FIN", "GASTO FINANCIERO")
+    ingreso_fin_25, ingreso_fin_24 = tot("INGRESO FIN", "INGRESO FINANCIERO")
+    imp_25, imp_24 = tot("IMPUESTOS")
+    dep_25, dep_24 = tot("DEPRECIACION")
+    amo_25, amo_24 = tot("AMORTIZACION")
+
+    ub_25 = ing_25 - coss_25
+    ub_24 = ing_24 - coss_24
+
+    uo_25 = ub_25 - gadm_25
+    uo_24 = ub_24 - gadm_24
+
+    ebit_25 = uo_25 + otros_ing_25
+    ebit_24 = uo_24 + otros_ing_24
+
+    ebt_25 = ebit_25 - gasto_fin_25 + ingreso_fin_25
+    ebt_24 = ebit_24 - gasto_fin_24 + ingreso_fin_24
+
+    udi_25 = ebt_25 - imp_25
+    udi_24 = ebt_24 - imp_24
+
+    ebitda_25 = ebit_25 + dep_25 + amo_25
+    ebitda_24 = ebit_24 + dep_24 + amo_24
+
+    panel = [
+        ("INGRESO", ing_25, ing_24, "money"),
+        ("COSS", coss_25, coss_24, "money"),
+        ("UTILIDAD BRUTA", ub_25, ub_24, "money_bold"),
+        ("% UB", (ub_25/ing_25 if abs(ing_25)>1e-9 else None), (ub_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+        ("G.ADMN", gadm_25, gadm_24, "money"),
+        ("UTILIDAD OPERATIVA", uo_25, uo_24, "money_bold"),
+        ("%UO", (uo_25/ing_25 if abs(ing_25)>1e-9 else None), (uo_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+        ("OTROS INGRESOS", otros_ing_25, otros_ing_24, "money"),
+        ("EBIT", ebit_25, ebit_24, "money_bold"),
+        ("% EBIT", (ebit_25/ing_25 if abs(ing_25)>1e-9 else None), (ebit_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+        ("GASTO FIN", gasto_fin_25, gasto_fin_24, "money"),
+        ("INGRESO FIN", ingreso_fin_25, ingreso_fin_24, "money"),
+        ("EBT", ebt_25, ebt_24, "money_bold"),
+        ("% EBT", (ebt_25/ing_25 if abs(ing_25)>1e-9 else None), (ebt_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+        ("IMPUESTOS", imp_25, imp_24, "money"),
+        ("Utilidad D.Imp.", udi_25, udi_24, "money_bold"),
+        ("%UDI", (udi_25/ing_25 if abs(ing_25)>1e-9 else None), (udi_24/ing_24 if abs(ing_24)>1e-9 else None), "pct"),
+        ("EBITDA", ebitda_25, ebitda_24, "money_bold"),
+    ]
+
+    df_panel = pd.DataFrame(panel, columns=["CONCEPTO", "2025", "2024", "_fmt"])
+    df_panel["% CAMBIO"] = df_panel.apply(lambda r: pct(r["2025"], r["2024"]) if r["_fmt"] != "pct" else None, axis=1)
+
+    def fmt_money(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return f"$ {float(v):,.0f}"
+
+    def fmt_pct(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return f"{float(v)*100:,.2f}%"
+
+    df_show = df_panel.copy()
+    is_pct = df_show["_fmt"].eq("pct")
+
+    df_show.loc[~is_pct, "2025"] = df_show.loc[~is_pct, "2025"].apply(fmt_money)
+    df_show.loc[~is_pct, "2024"] = df_show.loc[~is_pct, "2024"].apply(fmt_money)
+    df_show.loc[~is_pct, "% CAMBIO"] = df_show.loc[~is_pct, "% CAMBIO"].apply(lambda x: "" if x is None else f"{x*100:,.0f}%")
+
+    df_show.loc[is_pct, "2025"] = df_show.loc[is_pct, "2025"].apply(fmt_pct)
+    df_show.loc[is_pct, "2024"] = df_show.loc[is_pct, "2024"].apply(fmt_pct)
+    df_show.loc[is_pct, "% CAMBIO"] = ""
+
+    def style_panel(row):
+        concepto = str(row.get("CONCEPTO", "")).upper().strip()
+        if concepto in ["UTILIDAD BRUTA", "UTILIDAD OPERATIVA", "EBIT", "EBT", "UTILIDAD D.IMP.", "EBITDA"]:
+            return ["font-weight:800; background:#f2f2f2;"] * len(row)
+        if concepto in ["INGRESO", "COSS", "G.ADMN", "OTROS INGRESOS", "GASTO FIN", "INGRESO FIN", "IMPUESTOS"]:
+            return ["font-weight:700;"] * len(row)
+        return [""] * len(row)
+
+    st.markdown(f"### {empresa_sel}  \n**Miles MXN**")
+    st.dataframe(
+        df_show[["CONCEPTO", "2025", "2024", "% CAMBIO"]].style.apply(style_panel, axis=1),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.markdown("---")
+    st.markdown("### Detalle por Categoría (CATEGORIA_A)")
+
+    if df_pl["CATEGORIA_A"].astype(str).str.strip().replace("nan", "").eq("").all():
+        st.info("No hay CATEGORIA_A en el mapeo para mostrar desglose.")
+        return
+
+    df_cat = (
+        df_pl.groupby(["CLASIFICACION_A", "CATEGORIA_A"], as_index=False)[["2025", "2024"]]
+        .sum()
+    )
+
+    ORDEN_SECCIONES = [
+        "INGRESO",
+        "COSS",
+        "G.ADMN",
+        "OTROS INGRESOS",
+        "GASTO FIN",
+        "INGRESO FIN",
+        "IMPUESTOS",
+    ]
+
+    extras = [c for c in df_cat["CLASIFICACION_A"].unique().tolist() if c not in ORDEN_SECCIONES]
+    ORDEN_FINAL = [c for c in ORDEN_SECCIONES if c in df_cat["CLASIFICACION_A"].unique()] + sorted(extras)
+
+    def _pct(a, b):
+        return (a / b - 1.0) if abs(b) > 1e-9 else np.nan
+
+    rows = []
+    for clasif in ORDEN_FINAL:
+        sub = df_cat[df_cat["CLASIFICACION_A"] == clasif].copy()
+        if sub.empty:
+            continue
+
+        total_25 = float(sub["2025"].sum())
+        total_24 = float(sub["2024"].sum())
+
+        rows.append({
+            "SECCION": clasif,
+            "CATEGORIA": "",
+            "2025": total_25,
+            "CATEGORIA2": "",
+            "2024": total_24,
+            "% CAMBIO": _pct(total_25, total_24),
+            "_t": "header"
+        })
+
+        sub = sub.sort_values("CATEGORIA_A")
+        for _, r in sub.iterrows():
+            rows.append({
+                "SECCION": "",
+                "CATEGORIA": str(r["CATEGORIA_A"]),
+                "2025": float(r["2025"]),
+                "CATEGORIA2": str(r["CATEGORIA_A"]),
+                "2024": float(r["2024"]),
+                "% CAMBIO": _pct(float(r["2025"]), float(r["2024"])),
+                "_t": "detail"
+            })
+
+    df_det = pd.DataFrame(rows)
+
+    def _fmt_money(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return f"$ {float(v):,.0f}"
+
+    def _fmt_pct(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        return f"{float(v)*100:,.0f}%"
+
+    df_show2 = df_det.copy()
+    df_show2["2025"] = df_show2["2025"].apply(_fmt_money)
+    df_show2["2024"] = df_show2["2024"].apply(_fmt_money)
+    df_show2["% CAMBIO"] = df_show2["% CAMBIO"].apply(_fmt_pct)
+
+    def _style_detalle(row):
+        t = row.get("_t", "")
+        if t == "header":
+            return ["font-weight:800; background:#f2f2f2;"] * len(row)
+        return [""] * len(row)
+
+    st.dataframe(
+        df_show2[["SECCION", "CATEGORIA", "2025", "CATEGORIA2", "2024", "% CAMBIO"]]
+            .style.apply(_style_detalle, axis=1),
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+def tabla_escenarios_balance():
+    col1, col2 = st.columns([1, 1])
+
+    OPCIONES_EMPRESA = ["ACUMULADO"] + EMPRESAS
+    empresa_sel = col1.selectbox("Empresa", OPCIONES_EMPRESA, index=0)
+
+    df_mapeo_local = cargar_mapeo(mapeo_url)
+    if df_mapeo_local.empty:
+        st.stop()
+
+    if empresa_sel == "ACUMULADO":
+        empresas_cargar = EMPRESAS[:] 
+    else:
+        empresas_cargar = [empresa_sel]
+    data_empresas = cargar_balance_multi_hojas(balance_url, empresas_cargar)
+    data_empresas_ly = cargar_balance_multi_hojas(balance_ly, empresas_cargar)
+    if empresa_sel == "ACUMULADO":
+        dfs_act = [data_empresas.get(e, pd.DataFrame()).copy() for e in empresas_cargar]
+        dfs_ly  = [data_empresas_ly.get(e, pd.DataFrame()).copy() for e in empresas_cargar]
+        df_emp = pd.concat([d for d in dfs_act if not d.empty], ignore_index=True) if any([not d.empty for d in dfs_act]) else pd.DataFrame()
+        df_emp_ly = pd.concat([d for d in dfs_ly if not d.empty], ignore_index=True) if any([not d.empty for d in dfs_ly]) else pd.DataFrame()
+    else:
+        df_emp = data_empresas.get(empresa_sel, pd.DataFrame()).copy()
+        df_emp_ly = data_empresas_ly.get(empresa_sel, pd.DataFrame()).copy()
+
+    if df_emp.empty:
+        st.warning(f"⚠️ No hay datos para {empresa_sel}.")
+        st.stop()
+
+    col_cuenta = _encontrar_columna(df_emp, COLUMNAS_CUENTA)
+    col_monto = _encontrar_columna(df_emp, COLUMNAS_MONTO)
+    col_cuenta_ly = _encontrar_columna(df_emp_ly, COLUMNAS_CUENTA)
+    col_monto_ly = _encontrar_columna(df_emp_ly, COLUMNAS_MONTO)
+
+    if not col_cuenta or not col_monto:
+        st.error(f"❌ {empresa_sel}: columnas inválidas")
+        st.stop()
+
+
+    data_resultados = []
+    for empresa in EMPRESAS:
+        df_raw = data_empresas.get(empresa, pd.DataFrame()).copy()
+        if df_raw.empty:
+            continue
+
+        col_cuenta_raw = _encontrar_columna(df_raw, NUMERO_CUENTA)
+        col_monto_raw = _encontrar_columna(df_raw, COLUMNAS_MONTO)
+
+        if not col_cuenta_raw or not col_monto_raw:
+            st.warning(f"⚠️ {empresa}: no encontré columnas de Cuenta/Saldo para resultados.")
+            continue
+        df_raw[col_cuenta_raw] = df_raw[col_cuenta_raw].apply(limpiar_cuenta)
+        df_raw[col_monto_raw] = _to_numeric_money(df_raw[col_monto_raw])
+
+        df_raw = df_raw.dropna(subset=[col_cuenta_raw])
+        df_cta = df_raw.groupby(col_cuenta_raw, as_index=False)[col_monto_raw].sum()
+
+        ingreso = df_cta.loc[
+            (df_cta[col_cuenta_raw] > 400000000) & (df_cta[col_cuenta_raw] < 500000000),
+            col_monto_raw
+        ].sum()
+
+        gasto = df_cta.loc[
+            (df_cta[col_cuenta_raw] > 500000000),
+            col_monto_raw
+        ].sum()
+
+        utilidad = ingreso + gasto
+
+        data_resultados.append({
+            "EMPRESA": empresa,
+            "INGRESO": float(ingreso),
+            "GASTO": float(gasto),
+            "UTILIDAD": float(utilidad),
+        })
+
+    df_resultados = pd.DataFrame(data_resultados)
+
+    if empresa_sel == "ACUMULADO" and not df_resultados.empty:
+        df_total = pd.DataFrame([{
+            "EMPRESA": "TOTAL",
+            "INGRESO": float(df_resultados["INGRESO"].sum()),
+            "GASTO": float(df_resultados["GASTO"].sum()),
+            "UTILIDAD": float(df_resultados["UTILIDAD"].sum()),
+        }])
+        df_resultados = pd.concat([df_resultados, df_total], ignore_index=True)
+
+    st.markdown("### Estado de Resultados por Empresa")
+    st.dataframe(df_resultados, use_container_width=True, hide_index=True)
+
+
+    df_emp[col_cuenta] = df_emp[col_cuenta].apply(limpiar_cuenta)
+    df_emp[col_monto] = _to_numeric_money(df_emp[col_monto])
+    df_emp = df_emp.dropna(subset=[col_cuenta])
+    df_emp = df_emp.groupby(col_cuenta, as_index=False)[col_monto].sum()
+
+    df_emp_ly[col_cuenta_ly] = df_emp_ly[col_cuenta_ly].apply(limpiar_cuenta)
+    df_emp_ly[col_monto_ly] = _to_numeric_money(df_emp_ly[col_monto_ly])
+    df_emp_ly = df_emp_ly.dropna(subset=[col_cuenta_ly])
+    df_emp_ly = df_emp_ly.groupby(col_cuenta_ly, as_index=False)[col_monto_ly].sum()
+
+    df_merged = df_emp.merge(
+        df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
+        left_on=col_cuenta,
+        right_on="Cuenta",
+        how="left",
+    )
+
+    df_merged_ly = df_emp_ly.merge(df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]], left_on=col_cuenta, right_on="Cuenta", how="left",)
+
+    df_no_mapeadas = df_merged[df_merged["CLASIFICACION"].isna()].copy()
+    df_ok = df_merged[~df_merged["CLASIFICACION"].isna()].copy()
+    df_ok_ly = df_merged_ly[~df_merged_ly["CLASIFICACION"].isna()].copy()
+
+    if df_ok.empty:
+        st.warning(f"⚠️ {empresa_sel}: sin coincidencias con el mapeo.")
+        st.stop()
+
+    ORDEN = ("ACTIVO", "PASIVO", "CAPITAL")
+
+    df_ok["CLASIFICACION"] = df_ok["CLASIFICACION"].astype(str).str.upper().str.strip()
+    df_ok["CATEGORIA"] = df_ok["CATEGORIA"].astype(str).str.strip()
+    df_ok[col_monto] = pd.to_numeric(df_ok[col_monto], errors="coerce").fillna(0.0)
+
+    df_ok = df_ok[df_ok["CLASIFICACION"].isin(ORDEN)].copy()
+    df_ok = df_ok[df_ok["CATEGORIA"].str.upper().ne("MAYOR")].copy()
+
+    df_grp = (
+        df_ok.groupby(["CLASIFICACION", "CATEGORIA"], as_index=False)[col_monto]
+        .sum()
+        .rename(columns={col_monto: "MONTO"})
+    )
+    df_merged_ly = df_emp_ly.merge(
+        df_mapeo_local[["Cuenta", "CLASIFICACION", "CATEGORIA"]],
+        left_on=col_cuenta_ly,
+        right_on="Cuenta",
+        how="left",
+    )
+
+    df_ok_ly = df_merged_ly[~df_merged_ly["CLASIFICACION"].isna()].copy()
+
+    df_ok_ly["CLASIFICACION"] = df_ok_ly["CLASIFICACION"].astype(str).str.upper().str.strip()
+    df_ok_ly["CATEGORIA"] = df_ok_ly["CATEGORIA"].astype(str).str.strip()
+    df_ok_ly[col_monto_ly] = pd.to_numeric(df_ok_ly[col_monto_ly], errors="coerce").fillna(0.0)
+
+    df_ok_ly = df_ok_ly[df_ok_ly["CLASIFICACION"].isin(ORDEN)].copy()
+    df_ok_ly = df_ok_ly[df_ok_ly["CATEGORIA"].str.upper().ne("MAYOR")].copy()
+
+    df_grp_ly = (
+        df_ok_ly.groupby(["CLASIFICACION", "CATEGORIA"], as_index=False)[col_monto_ly]
+        .sum()
+        .rename(columns={col_monto_ly: "MONTO_LY"})
+    )
+
+    df_base = df_grp.merge(df_grp_ly, on=["CLASIFICACION", "CATEGORIA"], how="outer")
+    df_base["MONTO"] = pd.to_numeric(df_base["MONTO"], errors="coerce").fillna(0.0)
+    df_base["MONTO_LY"] = pd.to_numeric(df_base["MONTO_LY"], errors="coerce").fillna(0.0)
+    df_base["% VARIACION"] = np.where(
+        df_base["MONTO_LY"].abs() > 1e-9,
+        (df_base["MONTO"] / df_base["MONTO_LY"]) - 1.0,
+        np.nan
+    )
+
+    rows = []
+    totales = {}
+    totales_ly = {}
+
+    for clasif in ORDEN:
+        sub = df_base[df_base["CLASIFICACION"] == clasif].copy()
+
+        total_act = float(sub["MONTO"].sum()) if not sub.empty else 0.0
+        total_ly  = float(sub["MONTO_LY"].sum()) if not sub.empty else 0.0
+        totales[clasif] = total_act
+        totales_ly[clasif] = total_ly
+
+        rows.append({
+            "SECCION": clasif,
+            "CUENTA": "",
+            "MONTO": total_act,
+            "MONTO_LY": total_ly,
+            "% VARIACION": (total_act / total_ly - 1.0) if abs(total_ly) > 1e-9 else np.nan
+        })
+        if not sub.empty:
+            sub = sub.sort_values("CATEGORIA")
+            for _, r in sub.iterrows():
+                rows.append({
+                    "SECCION": "",
+                    "CUENTA": str(r["CATEGORIA"]),
+                    "MONTO": float(r["MONTO"]),
+                    "MONTO_LY": float(r["MONTO_LY"]),
+                    "% VARIACION": float(r["% VARIACION"]) if pd.notna(r["% VARIACION"]) else np.nan
+                })
+
+        rows.append({"SECCION": "", "CUENTA": "", "MONTO": None, "MONTO_LY": None, "% VARIACION": None})
+    dif = float(totales.get("ACTIVO", 0.0) + (totales.get("PASIVO", 0.0) + totales.get("CAPITAL", 0.0)))
+    dif_ly = float(totales_ly.get("ACTIVO", 0.0) + (totales_ly.get("PASIVO", 0.0) + totales_ly.get("CAPITAL", 0.0)))
+
+    rows.append({
+        "SECCION": "RESUMEN",
+        "CUENTA": "DIFERENCIA",
+        "MONTO": dif,
+        "MONTO_LY": dif_ly,
+        "% VARIACION": (dif / dif_ly - 1.0) if abs(dif_ly) > 1e-9 else np.nan
+    })
+
+    df_out_raw = pd.DataFrame(rows)
+    def fmt_money(x):
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return ""
+        return f"${float(x):,.2f}"
+
+    def fmt_pct(x):
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return ""
+        return f"{x*100:,.1f}%"
+
+    df_out_show = df_out_raw.copy()
+    df_out_show["MONTO"] = df_out_show["MONTO"].apply(fmt_money)
+    df_out_show["MONTO_LY"] = df_out_show["MONTO_LY"].apply(fmt_money)
+    df_out_show["% VARIACION"] = df_out_show["% VARIACION"].apply(fmt_pct)
+
+    def estilo_reporte(row):
+        t = row.get("")
+        if t == "header":
+            return ["font-weight:700; border-top:2px solid #999; border-bottom:1px solid #999;"] * len(row)
+        if t == "blank":
+            return ["background-color:#fff;"] * len(row)
+        return [""] * len(row)
+
+    st.markdown(f"### {empresa_sel}")
+    st.dataframe(
+        df_out_show[["SECCION", "CUENTA", "MONTO", "MONTO_LY", "% VARIACION"]]
+            .style
+            .apply(estilo_reporte, axis=1)
+            .hide(axis="columns"),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    if abs(dif) < 1:
+        st.success("✅ El balance está cuadrado")
+    else:
+        st.error("❌ El balance no cuadra. Revisa mapeo/cuentas.")
+
+    if not df_no_mapeadas.empty:
+        st.markdown("## ⚠️ Cuentas NO mapeadas")
+        cols_show = [col_cuenta, col_monto]
+        cols_show = [c for c in cols_show if c in df_no_mapeadas.columns]
+        df_nm = df_no_mapeadas[cols_show].copy().rename(columns={col_cuenta: "Cuenta", col_monto: "Saldo"})
+        st.dataframe(df_nm, use_container_width=True, hide_index=True)
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df_ok.to_excel(writer, index=False, sheet_name=f"{empresa_sel[:25]}_detalle")
+        df_grp.to_excel(writer, index=False, sheet_name=f"{empresa_sel[:25]}_agrupado")
+        if not df_no_mapeadas.empty:
+            df_no_mapeadas.to_excel(writer, index=False, sheet_name="No_mapeadas")
+    st.markdown(f"### {empresa_sel}")
+
+    nombre_archivo = "Balance_Acumulado_TODAS.xlsx" if empresa_sel == "ACUMULADO" else f"Balance_Acumulado_{empresa_sel}.xlsx"
+
+    st.download_button(
+        label=f"💾 Descargar Excel ({empresa_sel})",
+        data=output.getvalue(),
+        file_name=f"Balance_Acumulado_{empresa_sel}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+
 if selected == "BALANCE GENERAL":
     tabla_balance_por_empresa()
 
 elif selected == "BALANCE POR EMPRESA":
     tabla_balance_general_acumulado()
 
+elif selected == "ESTADO DE RESULTADOS":
+    tabla_estado_resultados()
+
+elif selected == "ESCENARIOS EDR":
+    tabla_escenarios_edr()
+
+elif selected == "ESCENARIOS BALANCE":
+    tabla_escenarios_balance()
+
 
 
    
+
 
 
 
